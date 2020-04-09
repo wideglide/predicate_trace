@@ -52,7 +52,8 @@ static void __pred_trace_log_statistics() {
 /**
  * Update predicate statistics.
  *
- * @param opcode Comparison instruction opcode.
+ * @param opcode Comparison instruction opcode (ICmp or FCmp).
+ * @param predicate Comparison instruction predicate.
  */
 extern "C" void __pred_trace_update_stats(uint32_t opcode, uint32_t predicate) noexcept {
     std::lock_guard<std::mutex> lock(pred_counts_mutex);
