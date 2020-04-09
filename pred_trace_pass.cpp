@@ -38,6 +38,8 @@ PreservedAnalyses PredicateTracerPass::run(Module& module, ModuleAnalysisManager
 }
 
 bool PredicateTracerPass::processBasicBlock(BasicBlock& block, Function* update_fn_callee) {
+    bool modified = false;
+
     const auto get_cond_term = [&]() -> BranchInst* {
         auto term_insn = block.getTerminator();
         if (term_insn) {
@@ -55,22 +57,20 @@ bool PredicateTracerPass::processBasicBlock(BasicBlock& block, Function* update_
     // Check whether this block has a conditional terminator
     auto cond_term = get_cond_term();
     if (!cond_term) {
-        return false;
+        return modified;
     }
 
-    // Log the first comparison instruction that precedes the conditional branch
-    bool modified = false;
-    for (auto insn = cond_term->getPrevNode(); insn; insn = insn->getPrevNode()) {
-        auto cmp_insn = dyn_cast<CmpInst>(insn);
-        if (cmp_insn) {
-            // Update the predicate statistics
-            IRBuilder<> builder(&*cmp_insn);
-            const auto opcode = builder.getInt32(cmp_insn->getOpcode());
-            const auto predicate = builder.getInt32(cmp_insn->getPredicate());
-            builder.CreateCall(update_fn_callee, {opcode, predicate});
-            modified = true;
-            break;
-        }
+    // Assume the condition is the comparison function and instrument it
+    auto cmp_insn = dyn_cast<CmpInst>(cond_term->getCondition());
+    if (cmp_insn) {
+        // Update the predicate statistics
+        IRBuilder<> builder(&*cmp_insn);
+        const auto opcode = builder.getInt32(cmp_insn->getOpcode());
+        const auto predicate = builder.getInt32(cmp_insn->getPredicate());
+        builder.CreateCall(update_fn_callee, {opcode, predicate});
+        modified = true;
+    } else {
+        errs() << "WARNING: condition is not a comparison function\n";
     }
 
     return modified;
