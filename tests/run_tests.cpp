@@ -21,13 +21,13 @@ static void run_pred_trace_test(
     ASSERT_STREQ(observed.c_str(), expected);
 }
 
-#define PRED_TRACE_TEST(test_name, expected)                                                       \
-    TEST(PredTraceTest, test_name) {                                                               \
-        run_pred_trace_test(                                                                       \
-            "PRED_TRACE_LOG_PATH=/tmp/" #test_name ".json ./cmake-build-debug/llvm-ir/" #test_name \
-            "_exe/" #test_name "_exe >/dev/null 2>&1",                                             \
-            "/tmp/" #test_name ".json",                                                            \
-            expected);                                                                             \
+#define PRED_TRACE_TEST(test_name, expected)                                     \
+    TEST(PredTraceTest, test_name) {                                             \
+        run_pred_trace_test(                                                     \
+            "PRED_TRACE_LOG_PATH=/tmp/" #test_name ".json ./llvm-ir/" #test_name \
+            "_exe/" #test_name "_exe >/dev/null 2>&1",                           \
+            "/tmp/" #test_name ".json",                                          \
+            expected);                                                           \
     }
 
 PRED_TRACE_TEST(test_00, "{\"pred_trace_stats\":{\"pred_counts\":[[[\"icmp\",\"sgt\"],1]]}}");

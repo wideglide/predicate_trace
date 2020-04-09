@@ -23,6 +23,10 @@ add_library(pred_trace_support SHARED pred_trace_support.cpp)
 target_include_directories(pred_trace_support PUBLIC json/include)
 target_link_libraries(pred_trace_support PUBLIC LLVM)
 
+add_executable(run_tests tests/run_tests.cpp)
+target_include_directories(run_tests PUBLIC googletest/googletest/include)
+target_link_libraries(run_tests PUBLIC gtest_main)
+
 function(pred_trace_test)
     add_executable(${ARGV0} tests/${ARGV0}.cpp)
     set_target_properties(${ARGV0} PROPERTIES LINKER_LANGUAGE CXX)
@@ -35,10 +39,7 @@ function(pred_trace_test)
     llvmir_attach_executable(${ARGV0}_exe ${ARGV0}_pass00)
     target_link_libraries(${ARGV0}_exe pred_trace_support)
     add_dependencies(${ARGV0}_exe ${ARGV0}_pass00)
+    add_dependencies(run_tests ${ARGV0}_exe)
 endfunction()
 
 pred_trace_test(test_00)
-
-add_executable(run_tests tests/run_tests.cpp)
-target_include_directories(run_tests PUBLIC googletest/googletest/include)
-target_link_libraries(run_tests PUBLIC gtest_main)
