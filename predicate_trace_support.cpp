@@ -1,7 +1,6 @@
 #include <llvm/IR/Instructions.h>
 #include <llvm/Support/SMTAPI.h>
 
-#include <bitset>
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
@@ -10,6 +9,8 @@
 #include <nlohmann/json.hpp>
 #include <stack>
 #include <unordered_map>
+
+#include "predicate_trace_pass.h"
 
 using namespace llvm;
 
@@ -23,6 +24,16 @@ struct hash_pair {
 static bool set_finalizer = false;
 static std::unordered_map<std::pair<uint32_t, uint32_t>, size_t, hash_pair> predicate_counts;
 static std::mutex predicate_counts_mutex;
+
+/**
+ * Return a message logger.
+ *
+ * @return Logger.
+ */
+std::ostream& log() {
+    std::cerr << "PREDICATE_TRACE: ";
+    return std::cerr;
+}
 
 /**
  * Log predicate statistics.
@@ -47,8 +58,8 @@ static void __predicate_trace_log_statistics() {
         counts.emplace(key, it.second);
     }
 
-    o["predicate_trace_stats"]["predicate_counts"] = counts;
-    std::cerr << "PREDICATE_TRACE: logging statistics to " << path << "\n";
+    o["predicate_trace_statistics"]["predicate_counts"] = counts;
+    log() << "logging statistics to " << path << "\n";
     std::ofstream output(path);
     output << o.dump();
 }
@@ -76,92 +87,118 @@ extern "C" void __predicate_trace_update_stats(uint32_t opcode, uint32_t predica
     }
 }
 
-// TODO: Do we want to perform any counting?  e.g., for number of symbolic variables?
-enum PredicateFeature {
-    BoolSort,
-    BVSort,
-    FP16Sort,
-    FP32Sort,
-    FP64Sort,
-    FP128Sort,
-    BVAdd,
-    BVSub,
-    BVMul,
-    BVSRem,
-    BVURem,
-    BVSDiv,
-    BVUDiv,
-    BVShl,
-    BVAShr,
-    BVLShr,
-    BVNeg,
-    BVNot,
-    BVXor,
-    BVOr,
-    BVAnd,
-    BVUlt,
-    BVSlt,
-    BVUgt,
-    BVSgt,
-    BVUle,
-    BVSle,
-    BVUge,
-    BVSge,
-    Not,
-    Equal,
-    And,
-    Or,
-    Ite,
-    BVSignExt,
-    BVZeroExt,
-    BVExtract,
-    BVConcat,
-    FPNeg,
-    FPIsInfinite,
-    FPIsNaN,
-    FPIsNormal,
-    FPIsZero,
-    FPMul,
-    FPDiv,
-    FPRem,
-    FPAdd,
-    FPSub,
-    FPLt,
-    FPGt,
-    FPLe,
-    FPGe,
-    FPEqual,
-    FPtoFP,
-    SBVtoFP,
-    UBVtoFP,
-    FPtoSBV,
-    FPtoUBV,
-    BoolLit,
-    BVLit,
-    FPLit,
-    Symbolic,
+// The feature vector needs to be wide enough to cover the predicate feature enum
+using GlobalScope = std::map<const uint64_t*, PredicateFeatures>;
+static GlobalScope globals;
+static std::mutex globals_mutex;
+
+/**
+ * Return a value.
+ *
+ * TODO: Should we worry about concurrency issues with returned values here?
+ *
+ * @param ptr Pointer.
+ * @return Value.
+ */
+extern "C" uint64_t __predicate_trace_load(const uint64_t* ptr) noexcept {
+    std::lock_guard<std::mutex> lock(globals_mutex);
+    auto it = globals.find(ptr);
+    if (it != globals.end()) {
+        return it->second.to_ullong();
+    }
+
+    it = globals.upper_bound(ptr);
+    if (it != globals.end()) {
+        if (it != globals.begin()) {
+            --it;
+//            log() << "fuzzy load hit " << ptr << " -> " << it->first << "\n";
+            return it->second.to_ullong();
+        }
+    }
+
+//    log() << "load miss for " << ptr << "\n";
+    return 0;
+}
+
+/**
+ * Set a value.
+ *
+ * @param ptr Pointer.
+ * @param value Value.
+ */
+extern "C" void __predicate_trace_store(const uint64_t* ptr, const uint64_t value) noexcept {
+    std::lock_guard<std::mutex> lock(globals_mutex);
+    globals[ptr] = value;
+}
+
+struct LocalScope {
+    std::vector<PredicateFeatures> arguments_;
+    PredicateFeatures return_value_;
 };
 
-using predicate_features = std::bitset<64>;
-static std::unordered_map<uint64_t, predicate_features> predicate_set;
-static std::mutex predicate_set_mutex;
+static thread_local std::stack<LocalScope> call_stack;  // NOLINT(cert-err58-cpp)
 
-extern "C" void __predicate_trace_enter_function() noexcept {}
+/**
+ * Push a new local scope.
+ */
+extern "C" void __predicate_trace_push_locals() noexcept {
+    // Push a scope with one slot for the return value, if any
+    call_stack.push({});
+}
 
-extern "C" void __predicate_trace_exit_function() noexcept {}
+/**
+ * Pop a local scope, returning the return value.
+ *
+ * @return Return value.
+ */
+extern "C" uint64_t __predicate_trace_pop_locals() noexcept {
+    assert(!call_stack.empty());
+    auto return_value = call_stack.top().return_value_.to_ullong();
+    call_stack.pop();
+    return return_value;
+}
 
-predicate_features __predicate_trace_get_value(uint32_t value_id) noexcept {}
+/**
+ * Push an argument value.
+ *
+ * @param value Value.
+ */
+extern "C" void __predicate_trace_push_argument(const uint64_t value) noexcept {
+    assert(!call_stack.empty());
+    call_stack.top().arguments_.emplace_back(value);
+}
 
-void __predicate_trace_set_value(uint32_t value_id, predicate_features value) noexcept {}
+/**
+ * Return an argument value.
+ *
+ * @param index Index.
+ * @return Value.
+ */
+extern "C" uint64_t __predicate_trace_get_argument(const uint32_t index) noexcept {
+    assert(!call_stack.empty() && index < call_stack.top().arguments_.size());
+    return call_stack.top().arguments_[index].to_ullong();
+}
+
+/**
+ * Set a return value.
+ *
+ * @param value Value.
+ */
+extern "C" void __predicate_trace_set_return(const uint64_t value) noexcept {
+    assert(!call_stack.empty());
+    call_stack.top().return_value_ = value;
+}
+
+static thread_local std::unordered_map<uint64_t, uint64_t> predicates;
 
 /**
  * Push a path predicate.
  *
  * @param block_label Block label.
- * @param value_id Value ID.
+ * @param predicate Predicate.
  */
-extern "C" void __predicate_trace_push(uint64_t block_label, uint32_t value_id) noexcept {
-    std::lock_guard<std::mutex> lock(predicate_set_mutex);
+extern "C" void __predicate_trace_push(uint64_t block_label, uint64_t predicate) noexcept {
+    predicates[block_label] = predicate;
 }
 
 /**
@@ -170,5 +207,5 @@ extern "C" void __predicate_trace_push(uint64_t block_label, uint32_t value_id) 
  * @param block_label Block label.
  */
 extern "C" void __predicate_trace_pop(uint64_t block_label) noexcept {
-    std::lock_guard<std::mutex> lock(predicate_set_mutex);
+    predicates.erase(block_label);
 }

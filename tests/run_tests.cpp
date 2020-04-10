@@ -31,10 +31,19 @@ static void run_predicate_trace_test(
     }
 
 PREDICATE_TRACE_TEST(
-    test_if_00, "{\"predicate_trace_stats\":{\"predicate_counts\":[[[\"icmp\",\"sgt\"],1]]}}");
+    test_if_00, "{\"predicate_trace_statistics\":{\"predicate_counts\":[[[\"icmp\",\"sgt\"],1]]}}");
 PREDICATE_TRACE_TEST(
-    test_if_01, "{\"predicate_trace_stats\":{\"predicate_counts\":[[[\"icmp\",\"sgt\"],2]]}}");
+    test_if_01, "{\"predicate_trace_statistics\":{\"predicate_counts\":[[[\"icmp\",\"sgt\"],2]]}}");
 PREDICATE_TRACE_TEST(
-    test_ifelse_00, "{\"predicate_trace_stats\":{\"predicate_counts\":[[[\"icmp\",\"sgt\"],1]]}}");
+    test_ifelse_00,
+    "{\"predicate_trace_statistics\":{\"predicate_counts\":[[[\"icmp\",\"sgt\"],1]]}}");
 PREDICATE_TRACE_TEST(
-    test_for_00, "{\"predicate_trace_stats\":{\"predicate_counts\":[[[\"icmp\",\"sge\"],11]]}}")
+    test_for_00,
+    "{\"predicate_trace_statistics\":{\"predicate_counts\":[[[\"icmp\",\"sge\"],11]]}}")
+PREDICATE_TRACE_TEST(
+    test_fn_00,
+    "{\"predicate_trace_statistics\":{\"predicate_counts\":[[[\"icmp\",\"sgt\"],3],[[\"icmp\","
+    "\"sge\"],1]]}}")
+PREDICATE_TRACE_TEST(
+    test_global_00,
+    "{\"predicate_trace_statistics\":{\"predicate_counts\":[[[\"icmp\",\"sgt\"],1]]}}")
