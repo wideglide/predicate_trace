@@ -1,12 +1,17 @@
 #include <llvm/IR/Instructions.h>
+#include <llvm/Support/SMTAPI.h>
 
+#include <bitset>
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <mutex>
 #include <nlohmann/json.hpp>
+#include <stack>
 #include <unordered_map>
+
+using namespace llvm;
 
 struct hash_pair {
     template <typename X, typename Y>
@@ -24,7 +29,6 @@ static std::mutex predicate_counts_mutex;
  */
 static void __predicate_trace_log_statistics() {
     using json = nlohmann::json;
-    using namespace llvm;
 
     std::lock_guard<std::mutex> lock(predicate_counts_mutex);
 
@@ -65,23 +69,98 @@ extern "C" void __predicate_trace_update_stats(uint32_t opcode, uint32_t predica
         ++*x;
     }
 
+    // TODO: We're also going to need a crash handler
     if (!set_finalizer) {
         std::atexit(__predicate_trace_log_statistics);
         set_finalizer = true;
     }
 }
 
-struct Expr {};
+// TODO: Do we want to perform any counting?  e.g., for number of symbolic variables?
+enum PredicateFeature {
+    BoolSort,
+    BVSort,
+    FP16Sort,
+    FP32Sort,
+    FP64Sort,
+    FP128Sort,
+    BVAdd,
+    BVSub,
+    BVMul,
+    BVSRem,
+    BVURem,
+    BVSDiv,
+    BVUDiv,
+    BVShl,
+    BVAShr,
+    BVLShr,
+    BVNeg,
+    BVNot,
+    BVXor,
+    BVOr,
+    BVAnd,
+    BVUlt,
+    BVSlt,
+    BVUgt,
+    BVSgt,
+    BVUle,
+    BVSle,
+    BVUge,
+    BVSge,
+    Not,
+    Equal,
+    And,
+    Or,
+    Ite,
+    BVSignExt,
+    BVZeroExt,
+    BVExtract,
+    BVConcat,
+    FPNeg,
+    FPIsInfinite,
+    FPIsNaN,
+    FPIsNormal,
+    FPIsZero,
+    FPMul,
+    FPDiv,
+    FPRem,
+    FPAdd,
+    FPSub,
+    FPLt,
+    FPGt,
+    FPLe,
+    FPGe,
+    FPEqual,
+    FPtoFP,
+    SBVtoFP,
+    UBVtoFP,
+    FPtoSBV,
+    FPtoUBV,
+    BoolLit,
+    BVLit,
+    FPLit,
+    Symbolic,
+};
 
-static std::unordered_map<uint64_t, Expr> predicate_set;
+using predicate_features = std::bitset<64>;
+static std::unordered_map<uint64_t, predicate_features> predicate_set;
 static std::mutex predicate_set_mutex;
+
+extern "C" void __predicate_trace_enter_function() noexcept {}
+
+extern "C" void __predicate_trace_exit_function() noexcept {}
+
+predicate_features __predicate_trace_get_value(uint32_t value_id) noexcept {}
+
+void __predicate_trace_set_value(uint32_t value_id, predicate_features value) noexcept {}
 
 /**
  * Push a path predicate.
  *
  * @param block_label Block label.
+ * @param value_id Value ID.
  */
-extern "C" void __predicate_trace_push(uint64_t block_label) noexcept {
+extern "C" void __predicate_trace_push(uint64_t block_label, uint32_t value_id) noexcept {
     std::lock_guard<std::mutex> lock(predicate_set_mutex);
 }
 
