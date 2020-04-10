@@ -59,7 +59,7 @@ extern "C" void __predicate_trace_update_stats(uint32_t opcode, uint32_t predica
     std::lock_guard<std::mutex> lock(predicate_counts_mutex);
 
     auto key = std::make_pair(opcode, predicate);
-    auto it = predicate_counts.try_emplace(key, 1);
+    auto it = predicate_counts.emplace(key, 1);
     if (!it.second) {
         size_t* x = &it.first->second;
         ++*x;

@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.15)
 project(predicate_trace C CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_COMPILER_ID Clang)
 
 find_package(LLVM 9.0.1 REQUIRED CONFIG)
