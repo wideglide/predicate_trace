@@ -70,3 +70,19 @@ extern "C" void __pred_trace_update_stats(uint32_t opcode, uint32_t predicate) n
         set_finalizer = true;
     }
 }
+
+/**
+ * Push a path predicate.
+ *
+ * @param block_label Block label.
+ */
+extern "C" void __pred_trace_push(uint64_t block_label) noexcept {
+}
+
+/**
+ * Pop a path predicate.
+ *
+ * @param block_label Block label.
+ */
+extern "C" void __pred_trace_pop(uint64_t block_label) noexcept {
+}

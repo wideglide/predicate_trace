@@ -30,5 +30,6 @@ static void run_pred_trace_test(
             expected);                                                           \
     }
 
-PRED_TRACE_TEST(test_00, "{\"pred_trace_stats\":{\"pred_counts\":[[[\"icmp\",\"sgt\"],1]]}}");
-PRED_TRACE_TEST(test_01, "{\"pred_trace_stats\":{\"pred_counts\":[[[\"icmp\",\"sge\"],11]]}}")
+PRED_TRACE_TEST(test_if_00, "{\"pred_trace_stats\":{\"pred_counts\":[[[\"icmp\",\"sgt\"],1]]}}");
+PRED_TRACE_TEST(test_ifelse_00, "{\"pred_trace_stats\":{\"pred_counts\":[[[\"icmp\",\"sgt\"],1]]}}");
+PRED_TRACE_TEST(test_for_00, "{\"pred_trace_stats\":{\"pred_counts\":[[[\"icmp\",\"sge\"],11]]}}")

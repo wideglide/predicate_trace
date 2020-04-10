@@ -42,5 +42,6 @@ function(pred_trace_test)
     add_dependencies(run_tests ${ARGV0}_exe)
 endfunction()
 
-pred_trace_test(test_00)
-pred_trace_test(test_01)
+pred_trace_test(test_if_00)
+pred_trace_test(test_ifelse_00)
+pred_trace_test(test_for_00)
