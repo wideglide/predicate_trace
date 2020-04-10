@@ -4,9 +4,9 @@
 #include <fstream>
 #include <iostream>
 
-static void run_pred_trace_test(
+static void run_predicate_trace_test(
     const char* test_command, const char* output_path, const char* expected) {
-    auto result = setenv("PRED_TRACE_LOG_PATH", output_path, 1);
+    auto result = setenv("PREDICATE_TRACE_LOG_PATH", output_path, 1);
     ASSERT_EQ(result, 0);
     result = std::system(test_command);
     ASSERT_EQ(result, 0);
@@ -21,16 +21,20 @@ static void run_pred_trace_test(
     ASSERT_STREQ(observed.c_str(), expected);
 }
 
-#define PRED_TRACE_TEST(test_name, expected)                                     \
+#define PREDICATE_TRACE_TEST(test_name, expected)                                \
     TEST(PredTraceTest, test_name) {                                             \
-        run_pred_trace_test(                                                     \
+        run_predicate_trace_test(                                                \
             "PRED_TRACE_LOG_PATH=/tmp/" #test_name ".json ./llvm-ir/" #test_name \
             "_exe/" #test_name "_exe >/dev/null 2>&1",                           \
             "/tmp/" #test_name ".json",                                          \
             expected);                                                           \
     }
 
-PRED_TRACE_TEST(test_if_00, "{\"pred_trace_stats\":{\"pred_counts\":[[[\"icmp\",\"sgt\"],1]]}}");
-PRED_TRACE_TEST(test_if_01, "{\"pred_trace_stats\":{\"pred_counts\":[[[\"icmp\",\"sgt\"],2]]}}");
-PRED_TRACE_TEST(test_ifelse_00, "{\"pred_trace_stats\":{\"pred_counts\":[[[\"icmp\",\"sgt\"],1]]}}");
-PRED_TRACE_TEST(test_for_00, "{\"pred_trace_stats\":{\"pred_counts\":[[[\"icmp\",\"sge\"],11]]}}")
+PREDICATE_TRACE_TEST(
+    test_if_00, "{\"predicate_trace_stats\":{\"predicate_counts\":[[[\"icmp\",\"sgt\"],1]]}}");
+PREDICATE_TRACE_TEST(
+    test_if_01, "{\"predicate_trace_stats\":{\"predicate_counts\":[[[\"icmp\",\"sgt\"],2]]}}");
+PREDICATE_TRACE_TEST(
+    test_ifelse_00, "{\"predicate_trace_stats\":{\"predicate_counts\":[[[\"icmp\",\"sgt\"],1]]}}");
+PREDICATE_TRACE_TEST(
+    test_for_00, "{\"predicate_trace_stats\":{\"predicate_counts\":[[[\"icmp\",\"sge\"],11]]}}")

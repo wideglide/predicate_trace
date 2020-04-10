@@ -1,4 +1,4 @@
-#include "pred_trace_pass.h"
+#include "predicate_trace_pass.h"
 
 #include <llvm/Analysis/PostDominators.h>
 #include <llvm/IR/IRBuilder.h>
@@ -14,31 +14,31 @@ PreservedAnalyses PredicateTracerPass::run(Module& module, ModuleAnalysisManager
 
     // Declare the statistics update function
     auto& context = module.getContext();
-    auto update_pred_stats_fn_ty = FunctionType::get(
+    auto update_predicate_stats_fn_ty = FunctionType::get(
         Type::getVoidTy(context),
         {
             IntegerType::getInt32Ty(context),
             IntegerType::getInt32Ty(context),
         },
         false);
-    auto update_pred_stats_fn_decl =
-        module.getOrInsertFunction("__pred_trace_update_stats", update_pred_stats_fn_ty);
-    update_pred_stats_fn_ = dyn_cast<Function>(update_pred_stats_fn_decl.getCallee());
-    update_pred_stats_fn_->setDoesNotThrow();
+    auto update_predicate_stats_fn_decl =
+        module.getOrInsertFunction("__predicate_trace_update_stats", update_predicate_stats_fn_ty);
+    update_predicate_stats_fn_ = dyn_cast<Function>(update_predicate_stats_fn_decl.getCallee());
+    update_predicate_stats_fn_->setDoesNotThrow();
 
     // Declare the predicate push function
-    auto push_pred_fn_ty =
+    auto push_predicate_fn_ty =
         FunctionType::get(Type::getVoidTy(context), {IntegerType::getInt64Ty(context)}, false);
-    auto push_pred_fn_decl = module.getOrInsertFunction("__pred_trace_push", push_pred_fn_ty);
-    push_pred_fn_ = dyn_cast<Function>(push_pred_fn_decl.getCallee());
-    push_pred_fn_->setDoesNotThrow();
+    auto push_predicate_fn_decl = module.getOrInsertFunction("__predicate_trace_push", push_predicate_fn_ty);
+    push_predicate_fn_ = dyn_cast<Function>(push_predicate_fn_decl.getCallee());
+    push_predicate_fn_->setDoesNotThrow();
 
     // Declare the predicate pop function
-    auto pop_pred_fn_ty =
+    auto pop_predicate_fn_ty =
         FunctionType::get(Type::getVoidTy(context), {IntegerType::getInt64Ty(context)}, false);
-    auto pop_pred_fn_decl = module.getOrInsertFunction("__pred_trace_pop", pop_pred_fn_ty);
-    pop_pred_fn_ = dyn_cast<Function>(pop_pred_fn_decl.getCallee());
-    pop_pred_fn_->setDoesNotThrow();
+    auto pop_predicate_fn_decl = module.getOrInsertFunction("__predicate_trace_pop", pop_predicate_fn_ty);
+    pop_predicate_fn_ = dyn_cast<Function>(pop_predicate_fn_decl.getCallee());
+    pop_predicate_fn_->setDoesNotThrow();
 
     // Process all functions in the module
     bool modified = false;
@@ -94,7 +94,7 @@ bool PredicateTracerPass::processBasicBlock(BasicBlock& block) {
         IRBuilder<> builder(&*cmp_insn);
         const auto opcode = builder.getInt32(cmp_insn->getOpcode());
         const auto predicate = builder.getInt32(cmp_insn->getPredicate());
-        builder.CreateCall(update_pred_stats_fn_, {opcode, predicate});
+        builder.CreateCall(update_predicate_stats_fn_, {opcode, predicate});
         modified = true;
     } else {
         errs() << "WARNING: condition is not a comparison function\n";
@@ -108,7 +108,7 @@ bool PredicateTracerPass::processBasicBlock(BasicBlock& block) {
         cond_term->getSuccessor(0), cond_term->getSuccessor(1));
     assert(post_dom_block != nullptr);
     IRBuilder<> builder(&*post_dom_block->getFirstInsertionPt());
-    builder.CreateCall(pop_pred_fn_, {builder.getInt64(block_label)});
+    builder.CreateCall(pop_predicate_fn_, {builder.getInt64(block_label)});
 
     // Insert basic block for each outgoing edge to push respective path predicates
     // TODO: Insert actual predicate and not just the block label
@@ -116,12 +116,12 @@ bool PredicateTracerPass::processBasicBlock(BasicBlock& block) {
     assert(true_block != nullptr);
     block_labels_.emplace(true_block, rng_());
     builder.SetInsertPoint(&*true_block->getFirstInsertionPt());
-    builder.CreateCall(push_pred_fn_, {builder.getInt64(block_label)});
+    builder.CreateCall(push_predicate_fn_, {builder.getInt64(block_label)});
     auto false_block = SplitEdge(&block, cond_term->getSuccessor(1));
     assert(false_block != nullptr);
     block_labels_.emplace(false_block, rng_());
     builder.SetInsertPoint(&*false_block->getFirstInsertionPt());
-    builder.CreateCall(push_pred_fn_, {builder.getInt64(block_label)});
+    builder.CreateCall(push_predicate_fn_, {builder.getInt64(block_label)});
 
     return modified;
 }

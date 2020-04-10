@@ -1,5 +1,5 @@
-#ifndef PREDICATE_TRACER_PRED_TRACE_PASS_H
-#define PREDICATE_TRACER_PRED_TRACE_PASS_H
+#ifndef PREDICATE_TRACER_PREDICATE_TRACE_PASS_H
+#define PREDICATE_TRACER_PREDICATE_TRACE_PASS_H
 
 #include <llvm/Analysis/PostDominators.h>
 #include <llvm/IR/PassManager.h>
@@ -17,10 +17,10 @@ private:
 
     std::mt19937_64 rng_;
     std::unordered_map<llvm::BasicBlock*, uint64_t> block_labels_;
-    llvm::Function* update_pred_stats_fn_{};
-    llvm::Function* push_pred_fn_{};
-    llvm::Function* pop_pred_fn_{};
+    llvm::Function* update_predicate_stats_fn_{};
+    llvm::Function* push_predicate_fn_{};
+    llvm::Function* pop_predicate_fn_{};
     llvm::PostDominatorTree post_dom_tree_;
 };
 
-#endif  // PREDICATE_TRACER_PRED_TRACE_PASS_H
+#endif  // PREDICATE_TRACER_PREDICATE_TRACE_PASS_H
