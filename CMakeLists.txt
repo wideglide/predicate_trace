@@ -43,5 +43,6 @@ function(pred_trace_test)
 endfunction()
 
 pred_trace_test(test_if_00)
+pred_trace_test(test_if_01)
 pred_trace_test(test_ifelse_00)
 pred_trace_test(test_for_00)

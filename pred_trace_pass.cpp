@@ -98,6 +98,7 @@ bool PredicateTracerPass::processBasicBlock(BasicBlock& block) {
         modified = true;
     } else {
         errs() << "WARNING: condition is not a comparison function\n";
+        return modified;
     }
 
     // Insert code to pop path predicates at post-dominator
@@ -113,10 +114,12 @@ bool PredicateTracerPass::processBasicBlock(BasicBlock& block) {
     // TODO: Insert actual predicate and not just the block label
     auto true_block = SplitEdge(&block, cond_term->getSuccessor(0));
     assert(true_block != nullptr);
+    block_labels_.emplace(true_block, rng_());
     builder.SetInsertPoint(&*true_block->getFirstInsertionPt());
     builder.CreateCall(push_pred_fn_, {builder.getInt64(block_label)});
     auto false_block = SplitEdge(&block, cond_term->getSuccessor(1));
     assert(false_block != nullptr);
+    block_labels_.emplace(false_block, rng_());
     builder.SetInsertPoint(&*false_block->getFirstInsertionPt());
     builder.CreateCall(push_pred_fn_, {builder.getInt64(block_label)});
 
