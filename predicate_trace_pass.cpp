@@ -113,7 +113,7 @@ PreservedAnalyses PredicateTracePass::run(Module& module, ModuleAnalysisManager&
         }
 
         // Compute the dominator and post-dominator trees for this function
-        dom_tree_ = DominatorTree(function);
+        DominatorTree(function);
         post_dom_tree_ = PostDominatorTree(function);
 
         // Label all basic blocks

@@ -77,7 +77,7 @@ enum PredicateFeature {
 };
 
 /**
- * Predicate tracer pass.
+ * Predicate trace pass.
  */
 struct PredicateTracePass : llvm::PassInfoMixin<PredicateTracePass> {
     explicit PredicateTracePass();
@@ -106,7 +106,6 @@ private:
     llvm::Function* set_return_fn_{};
     llvm::Function* push_predicate_fn_{};
     llvm::Function* pop_predicate_fn_{};
-    llvm::DominatorTree dom_tree_;
     llvm::PostDominatorTree post_dom_tree_;
 };
 

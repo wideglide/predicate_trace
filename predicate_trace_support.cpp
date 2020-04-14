@@ -111,12 +111,10 @@ extern "C" uint64_t __predicate_trace_load(const uint64_t* ptr) noexcept {
     if (it != globals.end()) {
         if (it != globals.begin()) {
             --it;
-//            log() << "fuzzy load hit " << ptr << " -> " << it->first << "\n";
             return it->second.to_ullong();
         }
     }
 
-//    log() << "load miss for " << ptr << "\n";
     return 0;
 }
 
