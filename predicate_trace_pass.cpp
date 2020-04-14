@@ -256,10 +256,12 @@ Instruction* PredicateTracePass::instrumentReturn(llvm::ReturnInst* return_inst)
 void PredicateTracePass::instrumentConditionalBranch(BranchInst* branch_inst) {
     assert(branch_inst && branch_inst->isConditional());
 
-    const auto invertPredicate = [](IRBuilder<>& builder, Value* predicate) {
+    const auto invertPredicate = [](IRBuilder<>& builder, Value* predicate) -> Value* {
         // Check if predicate is static
-        if (dyn_cast<ConstantInt>(predicate) != nullptr) {
-            return predicate;
+        if (auto const_int = dyn_cast<ConstantInt>(predicate)) {
+            PredicateFeatures inverted(const_int->getZExtValue());
+            inverted.set(Not);
+            return builder.getInt64(inverted.to_ullong());
         }
 
         // We need to generate run-time inversion code
