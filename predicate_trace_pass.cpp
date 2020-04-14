@@ -7,7 +7,7 @@
 #include <llvm/Passes/PassPlugin.h>
 #include <llvm/Transforms/Utils/BasicBlockUtils.h>
 
-#include <sstream>
+#include <iostream>
 
 using namespace llvm;
 
@@ -16,12 +16,13 @@ static raw_ostream& log() {
     return errs();
 }
 
-PredicateTracePass::PredicateTracePass() : rng_(time(nullptr)) {}
+PredicateTracePass::PredicateTracePass() : module_id_(0), function_id_(0) {}
 
 PreservedAnalyses PredicateTracePass::run(Module& module, ModuleAnalysisManager& manager) {
     log() << "instrumenting predicates for " << module.getName() << "\n";
 
     auto& context = module.getContext();
+    module_id_ = std::hash<std::string>{}(module.getModuleIdentifier());
 
     // Declare the statistics update function
     auto update_predicate_stats_fn_ty = FunctionType::get(
@@ -112,13 +113,15 @@ PreservedAnalyses PredicateTracePass::run(Module& module, ModuleAnalysisManager&
             continue;
         }
 
-        // Compute the dominator and post-dominator trees for this function
-        dom_tree_ = DominatorTree(function);
+        function_id_ = std::hash<std::string>{}(function.getGlobalIdentifier());
+
+        // Compute the post-dominator tree for this function
         post_dom_tree_ = PostDominatorTree(function);
 
         // Label all basic blocks
+        num_blocks_ = 0UL;
         for (auto& block : function) {
-            block_labels_.emplace(&block, rng_());
+            setBlockLabel(&block, num_blocks_++);
         }
 
         if (function.getName() == "main") {
@@ -142,7 +145,7 @@ PreservedAnalyses PredicateTracePass::run(Module& module, ModuleAnalysisManager&
             }
         }
 
-//        function.print(errs());
+        //        function.print(errs());
     }
 
     // We always modify the module
@@ -277,14 +280,14 @@ void PredicateTracePass::instrumentConditionalBranch(BranchInst* branch_inst) {
         return;
     }
 
-    auto block_label = block_labels_[branch_inst->getParent()];
+    auto block_label = getBlockLabel(branch_inst->getParent());
     IRBuilder<> builder(&*post_dom_block->getFirstInsertionPt());
     builder.CreateCall(pop_predicate_fn_, {builder.getInt64(block_label)});
 
     // Insert basic block for each outgoing edge to push respective path predicates
     auto true_block = SplitEdge(branch_inst->getParent(), branch_inst->getSuccessor(0));
     assert(true_block != nullptr);
-    block_labels_.emplace(true_block, rng_());
+    setBlockLabel(true_block, num_blocks_++);
     builder.SetInsertPoint(branch_inst);
     auto true_predicate = extractPredicate(builder, branch_inst);
     builder.SetInsertPoint(&*true_block->getFirstInsertionPt());
@@ -292,7 +295,7 @@ void PredicateTracePass::instrumentConditionalBranch(BranchInst* branch_inst) {
 
     auto false_block = SplitEdge(branch_inst->getParent(), branch_inst->getSuccessor(1));
     assert(false_block != nullptr);
-    block_labels_.emplace(false_block, rng_());
+    setBlockLabel(false_block, num_blocks_++);
     builder.SetInsertPoint(branch_inst);
     auto false_predicate = invertPredicate(builder, true_predicate);
     builder.SetInsertPoint(&*false_block->getFirstInsertionPt());
@@ -644,6 +647,20 @@ Value* PredicateTracePass::extractPredicate(IRBuilder<>& builder, Instruction* i
     }
 
     return builder.getInt64(predicate.to_ullong());
+}
+
+std::size_t PredicateTracePass::getBlockLabel(BasicBlock* block) {
+    const auto it = block_labels_.find(block);
+    if (it != block_labels_.end()) {
+        return it->second;
+    }
+
+    return 0;
+}
+void PredicateTracePass::setBlockLabel(BasicBlock* block, std::size_t id) {
+    std::uint64_t label =
+        ((module_id_ & 0xffffffUL) << 40UL) | ((function_id_ & 0xffffffUL) << 16UL) | (id & 0xffffUL);
+    block_labels_[block] = label;
 }
 
 extern "C" LLVM_ATTRIBUTE_WEAK PassPluginLibraryInfo llvmGetPassPluginInfo() {
