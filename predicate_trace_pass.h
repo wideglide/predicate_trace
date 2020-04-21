@@ -100,6 +100,7 @@ private:
     std::uint64_t function_id_;
     std::uint64_t num_blocks_;
     std::unordered_map<llvm::BasicBlock*, uint64_t> block_labels_;
+    std::unordered_map<llvm::CallBase*, llvm::Value*> return_values_;
     llvm::Function* update_predicate_stats_fn_{};
     llvm::Function* load_fn_{};
     llvm::Function* store_fn_{};

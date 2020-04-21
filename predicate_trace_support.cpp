@@ -88,7 +88,7 @@ extern "C" void __predicate_trace_update_stats(uint32_t opcode, uint32_t predica
 }
 
 // The feature vector needs to be wide enough to cover the predicate feature enum
-using GlobalScope = std::map<const uint64_t*, PredicateFeatures>;
+using GlobalScope = std::map<const uint64_t, PredicateFeatures>;
 static GlobalScope globals;
 static std::mutex globals_mutex;
 
@@ -100,7 +100,7 @@ static std::mutex globals_mutex;
  * @param ptr Pointer.
  * @return Value.
  */
-extern "C" uint64_t __predicate_trace_load(const uint64_t* ptr) noexcept {
+extern "C" uint64_t __predicate_trace_load(const uint64_t ptr) noexcept {
     std::lock_guard<std::mutex> lock(globals_mutex);
     auto it = globals.find(ptr);
     if (it != globals.end()) {
@@ -124,7 +124,7 @@ extern "C" uint64_t __predicate_trace_load(const uint64_t* ptr) noexcept {
  * @param ptr Pointer.
  * @param value Value.
  */
-extern "C" void __predicate_trace_store(const uint64_t* ptr, const uint64_t value) noexcept {
+extern "C" void __predicate_trace_store(const uint64_t ptr, const uint64_t value) noexcept {
     std::lock_guard<std::mutex> lock(globals_mutex);
     globals[ptr] = value;
 }

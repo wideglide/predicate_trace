@@ -39,14 +39,14 @@ PreservedAnalyses PredicateTracePass::run(Module& module, ModuleAnalysisManager&
 
     // Declare the load function
     auto load_fn_ty =
-        FunctionType::get(Type::getInt64Ty(context), {Type::getInt64PtrTy(context)}, false);
+        FunctionType::get(Type::getInt64Ty(context), {Type::getInt64Ty(context)}, false);
     auto load_fn_decl = module.getOrInsertFunction("__predicate_trace_load", load_fn_ty);
     load_fn_ = dyn_cast<Function>(load_fn_decl.getCallee());
     load_fn_->setDoesNotThrow();
 
     // Declare the store function
     auto store_fn_ty = FunctionType::get(
-        Type::getVoidTy(context), {Type::getInt64PtrTy(context), Type::getInt64Ty(context)}, false);
+        Type::getVoidTy(context), {Type::getInt64Ty(context), Type::getInt64Ty(context)}, false);
     auto store_fn_decl = module.getOrInsertFunction("__predicate_trace_store", store_fn_ty);
     store_fn_ = dyn_cast<Function>(store_fn_decl.getCallee());
     store_fn_->setDoesNotThrow();
@@ -117,6 +117,9 @@ PreservedAnalyses PredicateTracePass::run(Module& module, ModuleAnalysisManager&
 
         // Compute the post-dominator tree for this function
         post_dom_tree_ = PostDominatorTree(function);
+
+        // Reset the return values map
+        return_values_.clear();
 
         // Label all basic blocks
         num_blocks_ = 0UL;
@@ -199,8 +202,7 @@ llvm::Instruction* PredicateTracePass::instrumentStore(llvm::StoreInst* store_in
 
     IRBuilder<> builder(store_inst);
     auto value = extractPredicate(builder, store_inst->getValueOperand());
-    auto cast_inst = builder.CreatePointerCast(
-        store_inst->getPointerOperand(), Type::getInt64PtrTy(builder.getContext()));
+    auto cast_inst = builder.CreatePtrToInt(store_inst->getPointerOperand(), builder.getInt64Ty());
     builder.CreateCall(store_fn_, {cast_inst, value});
     return store_inst;
 }
@@ -237,7 +239,9 @@ Instruction* PredicateTracePass::instrumentCall(CallBase* call_inst) {
 
     // Clean up the function scope and record the result in the locals map
     builder.SetInsertPoint(call_inst->getNextNode());
-    return builder.CreateCall(pop_locals_fn_, {});
+    auto pop_locals_inst = builder.CreateCall(pop_locals_fn_, {});
+    return_values_[call_inst] = pop_locals_inst;
+    return pop_locals_inst;
 }
 
 Instruction* PredicateTracePass::instrumentReturn(llvm::ReturnInst* return_inst) {
@@ -427,8 +431,7 @@ Value* PredicateTracePass::extractPredicate(IRBuilder<>& builder, Value* value) 
         return extractPredicate(builder, inst);
     } else if (auto global = dyn_cast<GlobalValue>(value)) {
         // Fetch global features at run-time
-        auto cast_inst =
-            builder.CreatePointerCast(global, Type::getInt64PtrTy(builder.getContext()));
+        auto cast_inst = builder.CreatePtrToInt(global, builder.getInt64Ty());
         return builder.CreateCall(load_fn_, {cast_inst});
     } else if (auto constant = dyn_cast<Constant>(value)) {
         if (constant->getType()->isFloatingPointTy()) {
@@ -440,13 +443,13 @@ Value* PredicateTracePass::extractPredicate(IRBuilder<>& builder, Value* value) 
     } else if (auto arg = dyn_cast<Argument>(value)) {
         return builder.CreateCall(get_arg_fn_, {builder.getInt32(arg->getArgNo())});
     } else if (auto assembly = dyn_cast<InlineAsm>(value)) {
-        log() << "encountered assembly value\n";
+//        log() << "encountered assembly value\n";
     } else if (auto metadata = dyn_cast<MetadataAsValue>(value)) {
-        log() << "encountered metadata value\n";
+//        log() << "encountered metadata value\n";
     } else if (auto op = dyn_cast<Operator>(value)) {
-        log() << "encountered operator value\n";
+//        log() << "encountered operator value\n";
     } else if (auto derived = dyn_cast<DerivedUser>(value)) {
-        log() << "encountered derived user value\n";
+//        log() << "encountered derived user value\n";
     } else {
         log() << "unknown value type!\n";
     }
@@ -457,11 +460,23 @@ Value* PredicateTracePass::extractPredicate(IRBuilder<>& builder, Value* value) 
 Value* PredicateTracePass::extractPredicate(IRBuilder<>& builder, Instruction* inst) {
     assert(inst);
 
+    // Handle calls
+    if (auto call_inst = dyn_cast<CallBase>(inst)) {
+        IRBuilder<> call_builder(call_inst);
+        auto it = return_values_.find(call_inst);
+        if (it != return_values_.end()) {
+            return it->second;
+        }
+
+        log() << "missing return value feature vector for " << call_inst << "!\n";
+        return nullptr;
+    }
+
     // Handle loads from memory
     if (auto load_inst = dyn_cast<LoadInst>(inst)) {
         IRBuilder<> load_builder(load_inst);
-        auto cast_inst = load_builder.CreatePointerCast(
-            load_inst->getPointerOperand(), Type::getInt64PtrTy(load_builder.getContext()));
+        auto cast_inst =
+            load_builder.CreatePtrToInt(load_inst->getPointerOperand(), builder.getInt64Ty());
         return load_builder.CreateCall(load_fn_, {cast_inst});
     }
 
@@ -469,8 +484,8 @@ Value* PredicateTracePass::extractPredicate(IRBuilder<>& builder, Instruction* i
     if (auto phi_inst = dyn_cast<PHINode>(inst)) {
         // Create another phi for feature values
         IRBuilder<> phi_builder(phi_inst);
-        auto feature_phi_inst = phi_builder.CreatePHI(
-            Type::getInt64Ty(phi_builder.getContext()), phi_inst->getNumIncomingValues());
+        auto feature_phi_inst =
+            phi_builder.CreatePHI(phi_builder.getInt64Ty(), phi_inst->getNumIncomingValues());
         for (auto i = 0; i < phi_inst->getNumIncomingValues(); ++i) {
             auto incoming_block = phi_inst->getIncomingBlock(i);
             IRBuilder<> incoming_builder(incoming_block->getTerminator());
@@ -658,8 +673,8 @@ std::size_t PredicateTracePass::getBlockLabel(BasicBlock* block) {
     return 0;
 }
 void PredicateTracePass::setBlockLabel(BasicBlock* block, std::size_t id) {
-    std::uint64_t label =
-        ((module_id_ & 0xffffffUL) << 40UL) | ((function_id_ & 0xffffffUL) << 16UL) | (id & 0xffffUL);
+    std::uint64_t label = ((module_id_ & 0xffffffUL) << 40UL)
+                          | ((function_id_ & 0xffffffUL) << 16UL) | (id & 0xffffUL);
     block_labels_[block] = label;
 }
 
