@@ -24,8 +24,7 @@ static void run_predicate_trace_test(
 #define PREDICATE_TRACE_TEST(test_name, expected)                                \
     TEST(PredTraceTest, test_name) {                                             \
         run_predicate_trace_test(                                                \
-            "PRED_TRACE_LOG_PATH=/tmp/" #test_name ".json ./llvm-ir/" #test_name \
-            "_exe/" #test_name "_exe >/dev/null 2>&1",                           \
+            "PRED_TRACE_LOG_PATH=/tmp/" #test_name ".json ./" #test_name " >/dev/null 2>&1", \
             "/tmp/" #test_name ".json",                                          \
             expected);                                                           \
     }
@@ -47,3 +46,6 @@ PREDICATE_TRACE_TEST(
 PREDICATE_TRACE_TEST(
     test_global_00,
     "{\"predicate_trace_statistics\":{\"predicate_counts\":[[[\"icmp\",\"sgt\"],1]]}}")
+PREDICATE_TRACE_TEST(
+    test_bswap_00,
+    "{\"predicate_trace_statistics\":{\"predicate_counts\":[[[\"icmp\",\"sgt\"],2]]}}");

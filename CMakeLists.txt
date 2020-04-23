@@ -30,16 +30,14 @@ target_link_libraries(run_tests PUBLIC gtest_main)
 function(predicate_trace_test)
     add_executable(${ARGV0} tests/${ARGV0}.cpp)
     set_target_properties(${ARGV0} PROPERTIES LINKER_LANGUAGE CXX)
-    llvmir_attach_bc_target(${ARGV0}_bc ${ARGV0})
-    add_dependencies(${ARGV0}_bc ${ARGV0} predicate_trace_pass)
-    llvmir_attach_opt_pass_target(${ARGV0}_pass00 ${ARGV0}_bc
-            -load-pass-plugin ${CMAKE_BINARY_DIR}/libpredicate_trace_pass.so
-            -passes predicate-trace)
-    add_dependencies(${ARGV0}_pass00 ${ARGV0}_bc)
-    llvmir_attach_executable(${ARGV0}_exe ${ARGV0}_pass00)
-    target_link_libraries(${ARGV0}_exe predicate_trace_support)
-    add_dependencies(${ARGV0}_exe ${ARGV0}_pass00)
-    add_dependencies(run_tests ${ARGV0}_exe)
+    set_target_properties(${ARGV0} PROPERTIES COMPILE_FLAGS "\
+        -Xclang -load \
+	-Xclang ${CMAKE_BINARY_DIR}/libpredicate_trace_pass.so \
+	")
+    add_dependencies(${ARGV0} predicate_trace_pass)
+    target_link_libraries(${ARGV0} predicate_trace_support)
+    add_dependencies(run_tests ${ARGV0})
+
 endfunction()
 
 predicate_trace_test(test_if_00)

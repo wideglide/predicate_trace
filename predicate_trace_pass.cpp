@@ -3,9 +3,11 @@
 #include <llvm/Analysis/PostDominators.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Instructions.h>
-#include <llvm/Passes/PassBuilder.h>
-#include <llvm/Passes/PassPlugin.h>
 #include <llvm/Transforms/Utils/BasicBlockUtils.h>
+
+#include "llvm/IR/DerivedUser.h"
+#include "llvm/IR/LegacyPassManager.h"
+#include "llvm/Transforms/IPO/PassManagerBuilder.h"
 
 #include <iostream>
 
@@ -16,9 +18,51 @@ static raw_ostream& log() {
     return errs();
 }
 
-PredicateTracePass::PredicateTracePass() : module_id_(0), function_id_(0) {}
 
-PreservedAnalyses PredicateTracePass::run(Module& module, ModuleAnalysisManager& manager) {
+namespace {
+    class PredicateTracePass : public ModulePass {
+        public:
+            static char ID;
+            PredicateTracePass() : ModulePass(ID) {}
+
+            bool runOnModule(Module &) override;
+
+private:
+    void instrumentMain(Function&);
+    void instrumentInstructions(BasicBlock&);
+    Instruction* instrumentComparison(CmpInst*);
+    Instruction* instrumentStore(StoreInst*);
+    Instruction* instrumentCall(CallBase*);
+    Instruction* instrumentReturn(ReturnInst*);
+    void instrumentConditionalBranch(BranchInst*);
+    Value* extractPredicate(IRBuilder<>&, Instruction*);
+    Value* extractPredicate(IRBuilder<>&, Value*);
+    std::size_t getBlockLabel(BasicBlock*);
+    void setBlockLabel(BasicBlock*, std::size_t id);
+
+    std::uint64_t module_id_;
+    std::uint64_t function_id_;
+    std::uint64_t num_blocks_;
+    std::unordered_map<BasicBlock*, uint64_t> block_labels_;
+    std::unordered_map<CallBase*, Value*> return_values_;
+    Function* update_predicate_stats_fn_{};
+    Function* load_fn_{};
+    Function* store_fn_{};
+    Function* push_locals_fn_{};
+    Function* pop_locals_fn_{};
+    Function* push_arg_fn_{};
+    Function* get_arg_fn_{};
+    Function* set_return_fn_{};
+    Function* push_predicate_fn_{};
+    Function* pop_predicate_fn_{};
+    PostDominatorTree post_dom_tree_;
+    };
+}
+
+//PredicateTracePass::PredicateTracePass() : module_id_(0), function_id_(0) {}
+
+bool PredicateTracePass::runOnModule(Module &module) {
+
     log() << "instrumenting predicates for " << module.getName() << "\n";
 
     auto& context = module.getContext();
@@ -152,7 +196,7 @@ PreservedAnalyses PredicateTracePass::run(Module& module, ModuleAnalysisManager&
     }
 
     // We always modify the module
-    return PreservedAnalyses::none();
+    return true;
 }
 
 void PredicateTracePass::instrumentMain(llvm::Function& function) {
@@ -678,22 +722,18 @@ void PredicateTracePass::setBlockLabel(BasicBlock* block, std::size_t id) {
     block_labels_[block] = label;
 }
 
-extern "C" LLVM_ATTRIBUTE_WEAK PassPluginLibraryInfo llvmGetPassPluginInfo() {
-    return {
-        LLVM_PLUGIN_API_VERSION,
-        "predicate-trace",
-        LLVM_VERSION_STRING,
-        [](PassBuilder& builder) {
-            builder.registerPipelineParsingCallback([](StringRef name,
-                                                       ModulePassManager& manager,
-                                                       ArrayRef<PassBuilder::PipelineElement>) {
-                if (name == "predicate-trace") {
-                    manager.addPass(PredicateTracePass());
-                    return true;
-                }
+// Pass info
+char PredicateTracePass::ID = 0; // LLVM ignores the actual value
+static RegisterPass<PredicateTracePass> X("predicate-trace", "Predicate Trace", false, false);
 
-                return false;
-            });
-        },
-    };
+// Pass loading stuff
+// To use, run: clang -Xclang -load -Xclang <your-pass>.so <other-args> ...
+
+// This function is of type PassManagerBuilder::ExtensionFn
+static void loadPass(const PassManagerBuilder &Builder, legacy::PassManagerBase &PM) {
+  PM.add(new PredicateTracePass());
 }
+// These constructors add our pass to a list of global extensions.
+// static RegisterStandardPasses clangtoolLoader_Ox(PassManagerBuilder::EP_OptimizerLast, loadPass);
+static RegisterStandardPasses LoadPass(PassManagerBuilder::EP_ModuleOptimizerEarly, loadPass);
+static RegisterStandardPasses LoadPass0(PassManagerBuilder::EP_EnabledOnOptLevel0, loadPass);
