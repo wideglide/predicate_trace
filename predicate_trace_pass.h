@@ -77,7 +77,7 @@ enum PredicateFeature {
 };
 
 /**
- * Predicate tracer pass.
+ * Predicate trace pass.
  */
 struct PredicateTracePass : llvm::PassInfoMixin<PredicateTracePass> {
     explicit PredicateTracePass();
@@ -93,9 +93,14 @@ private:
     void instrumentConditionalBranch(llvm::BranchInst*);
     llvm::Value* extractPredicate(llvm::IRBuilder<>&, llvm::Instruction*);
     llvm::Value* extractPredicate(llvm::IRBuilder<>&, llvm::Value*);
+    std::size_t getBlockLabel(llvm::BasicBlock*);
+    void setBlockLabel(llvm::BasicBlock*, std::size_t id);
 
-    std::mt19937_64 rng_;
+    std::uint64_t module_id_;
+    std::uint64_t function_id_;
+    std::uint64_t num_blocks_;
     std::unordered_map<llvm::BasicBlock*, uint64_t> block_labels_;
+    std::unordered_map<llvm::CallBase*, llvm::Value*> return_values_;
     llvm::Function* update_predicate_stats_fn_{};
     llvm::Function* load_fn_{};
     llvm::Function* store_fn_{};
@@ -106,7 +111,6 @@ private:
     llvm::Function* set_return_fn_{};
     llvm::Function* push_predicate_fn_{};
     llvm::Function* pop_predicate_fn_{};
-    llvm::DominatorTree dom_tree_;
     llvm::PostDominatorTree post_dom_tree_;
 };
 
