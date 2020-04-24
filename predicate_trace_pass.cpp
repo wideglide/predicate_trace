@@ -468,8 +468,9 @@ Value* PredicateTracePass::extractPredicate(IRBuilder<>& builder, Instruction* i
             return it->second;
         }
 
-        log() << "missing return value feature vector for " << call_inst << "!\n";
-        return nullptr;
+        log() << "missing return value feature vector for call!\n";
+        call_inst->print(errs());
+        return call_builder.getInt64(0);
     }
 
     // Handle loads from memory
