@@ -45,5 +45,11 @@ PREDICATE_TRACE_TEST(
     "{\"predicate_trace_statistics\":{\"predicate_counts\":[[[\"icmp\",\"sgt\"],3],[[\"icmp\","
     "\"sge\"],1]]}}")
 PREDICATE_TRACE_TEST(
+    test_bswap_00,
+    "{\"predicate_trace_statistics\":{\"predicate_counts\":[[[\"icmp\",\"sgt\"],1]]}}");
+PREDICATE_TRACE_TEST(
+    test_fabs_00,
+    "{\"predicate_trace_statistics\":{\"predicate_counts\":[[[\"icmp\",\"sgt\"],1],[[\"fcmp\",\"oeq\"],2],[[\"icmp\",\"eq\"],1]]}}");
+PREDICATE_TRACE_TEST(
     test_global_00,
     "{\"predicate_trace_statistics\":{\"predicate_counts\":[[[\"icmp\",\"sgt\"],1]]}}")
