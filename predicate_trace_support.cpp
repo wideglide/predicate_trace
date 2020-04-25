@@ -1,28 +1,35 @@
+#pragma clang diagnostic push
+#pragma ide diagnostic ignored "bugprone-reserved-identifier"
 #include <llvm/IR/Instructions.h>
 #include <llvm/Support/SMTAPI.h>
+#include <unistd.h>
 
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <mutex>
 #include <nlohmann/json.hpp>
 #include <stack>
 #include <unordered_map>
+#include <unordered_set>
 
+#include "predicate_trace_fb.h"
 #include "predicate_trace_pass.h"
 
 using namespace llvm;
+namespace fs = std::filesystem;
 
-struct hash_pair {
-    template <typename X, typename Y>
-    size_t operator()(const std::pair<X, Y>& x) const {
-        return std::hash<X>()(x.first) ^ std::hash<Y>()(x.second);
-    }
-};
+/** Flag to determine whether a finalizer has been set or not. */
+static bool set_counts_finalizer = false;
 
-static bool set_finalizer = false;
-static std::unordered_map<std::pair<uint32_t, uint32_t>, size_t, hash_pair> predicate_counts;
+/** Predicate counts map. */
+static std::
+    unordered_map<std::pair<uint32_t, uint32_t>, size_t, llvm::pair_hash<uint32_t, uint32_t>>
+        predicate_counts;
+
+/** Predicate counts mutex. */
 static std::mutex predicate_counts_mutex;
 
 /**
@@ -43,14 +50,18 @@ static void __predicate_trace_log_statistics() {
 
     std::lock_guard<std::mutex> lock(predicate_counts_mutex);
 
-    char default_path[] = "/tmp/predicate_trace.json";
-    auto path = getenv("PREDICATE_TRACE_LOG_PATH");
-    if (!path) {
-        path = default_path;
+    char default_log_path[] = "/tmp/predicate_trace";
+    auto log_path = getenv("PREDICATE_TRACE_LOG_PATH");
+    if (!log_path) {
+        log_path = default_log_path;
     }
 
     json o;
-    std::unordered_map<std::pair<std::string, std::string>, size_t, hash_pair> counts;
+    std::unordered_map<
+        std::pair<std::string, std::string>,
+        size_t,
+        llvm::pair_hash<std::string, std::string>>
+        counts;
     for (auto& it : predicate_counts) {
         auto opcode = Instruction::getOpcodeName(it.first.first);
         auto predicate = CmpInst::getPredicateName(CmpInst::Predicate(it.first.second));
@@ -58,9 +69,13 @@ static void __predicate_trace_log_statistics() {
         counts.emplace(key, it.second);
     }
 
-    o["predicate_trace_statistics"]["predicate_counts"] = counts;
-    log() << "logging statistics to " << path << "\n";
-    std::ofstream output(path);
+    o["predicate_counts"] = counts;
+    fs::path log_dir = log_path;
+    std::error_code error;
+    fs::create_directories(log_dir, error);
+    fs::path file_path = log_dir / "statistics.json";
+    log() << "logging statistics to " << file_path << "\n";
+    std::ofstream output(file_path);
     output << o.dump();
 }
 
@@ -81,35 +96,34 @@ extern "C" void __predicate_trace_update_stats(uint32_t opcode, uint32_t predica
     }
 
     // TODO: We're also going to need a crash handler
-    if (!set_finalizer) {
+    if (!set_counts_finalizer) {
         std::atexit(__predicate_trace_log_statistics);
-        set_finalizer = true;
+        set_counts_finalizer = true;
     }
 }
 
 // The feature vector needs to be wide enough to cover the predicate feature enum
-using GlobalScope = std::map<const uint64_t, PredicateFeatures>;
-static GlobalScope globals;
-static std::mutex globals_mutex;
+// TODO: Should we worry about concurrency issues?
+using FeatureMemory = std::map<const uint64_t, PredicateFeatures>;
+static FeatureMemory features;
+static std::mutex features_mutex;
 
 /**
  * Return a value.
- *
- * TODO: Should we worry about concurrency issues with returned values here?
  *
  * @param ptr Pointer.
  * @return Value.
  */
 extern "C" uint64_t __predicate_trace_load(const uint64_t ptr) noexcept {
-    std::lock_guard<std::mutex> lock(globals_mutex);
-    auto it = globals.find(ptr);
-    if (it != globals.end()) {
+    std::lock_guard<std::mutex> lock(features_mutex);
+    auto it = features.find(ptr);
+    if (it != features.end()) {
         return it->second.to_ullong();
     }
 
-    it = globals.upper_bound(ptr);
-    if (it != globals.end()) {
-        if (it != globals.begin()) {
+    it = features.upper_bound(ptr);
+    if (it != features.end()) {
+        if (it != features.begin()) {
             --it;
             return it->second.to_ullong();
         }
@@ -125,8 +139,8 @@ extern "C" uint64_t __predicate_trace_load(const uint64_t ptr) noexcept {
  * @param value Value.
  */
 extern "C" void __predicate_trace_store(const uint64_t ptr, const uint64_t value) noexcept {
-    std::lock_guard<std::mutex> lock(globals_mutex);
-    globals[ptr] = value;
+    std::lock_guard<std::mutex> lock(features_mutex);
+    features[ptr] = value;
 }
 
 struct LocalScope {
@@ -187,7 +201,63 @@ extern "C" void __predicate_trace_set_return(const uint64_t value) noexcept {
     call_stack.top().return_value_ = value;
 }
 
-static thread_local std::unordered_map<uint64_t, uint64_t> predicates;
+/** Flag to determine whether a finalizer has been set. */
+static thread_local bool set_predicates_finalizer = false;
+
+/** Current predicate set at any given program point. */
+static thread_local std::unordered_map<uint64_t, uint64_t> current_predicates;
+
+/** Block predicates. */
+static thread_local std::unordered_map<uint64_t, std::pair<uint64_t, uint64_t>> block_predicates;
+
+/** Last conditional block. */
+static thread_local uint64_t last_block_label;
+
+/** Edge set. */
+static thread_local std::
+    unordered_set<std::pair<uint64_t, uint64_t>, llvm::pair_hash<uint64_t, uint64_t>>
+        edges;
+
+/**
+ * Log predicates.
+ */
+static void __predicate_trace_log_predicates() {
+    using namespace flatbuffers;
+    using namespace PredicateTrace;
+
+    char default_log_path[] = "/tmp/predicate_trace";
+    auto log_path = getenv("PREDICATE_TRACE_LOG_PATH");
+    if (!log_path) {
+        log_path = default_log_path;
+    }
+
+    fs::path log_dir = log_path;
+    std::error_code error;
+    fs::create_directories(log_dir, error);
+
+    std::vector<Edge> es;
+    es.reserve(edges.size());
+    for (auto& it : edges) {
+        es.emplace_back(it.first, it.second);
+    }
+
+    std::vector<BlockPredicate> ps;
+    ps.reserve(block_predicates.size());
+    for (auto& it : block_predicates) {
+        ps.emplace_back(it.first, it.second.first, it.second.second);
+    }
+
+    FlatBufferBuilder builder(1024);
+    auto trace = CreateTraceDirect(builder, &es, &ps);
+    builder.Finish(trace);
+
+    std::stringstream file_buffer;
+    file_buffer << "predicates_" << gettid() << ".fb";
+    fs::path file_path = log_dir / file_buffer.str();
+    log() << "logging predicates to " << file_path << "\n";
+    std::ofstream output(file_path, std::ios::binary);
+    output.write(reinterpret_cast<char*>(builder.GetBufferPointer()), builder.GetSize());
+}
 
 /**
  * Push a path predicate.
@@ -196,7 +266,31 @@ static thread_local std::unordered_map<uint64_t, uint64_t> predicates;
  * @param predicate Predicate.
  */
 extern "C" void __predicate_trace_push(uint64_t block_label, uint64_t predicate) noexcept {
-    predicates[block_label] = predicate;
+    current_predicates[block_label] = predicate;
+
+    auto path_features = 0UL;
+    for (auto& current_predicate : current_predicates) {
+        path_features |= current_predicate.second;
+    }
+
+    auto it = block_predicates.find(block_label);
+    if (it != block_predicates.end()) {
+        it->second.first |= path_features;
+        it->second.second = current_predicates.size();
+    } else {
+        block_predicates[block_label] = std::make_pair(path_features, current_predicates.size());
+    }
+
+    if (!last_block_label) {
+        edges.emplace(last_block_label, block_label);
+    }
+
+    last_block_label = block_label;
+
+    if (!set_predicates_finalizer) {
+        std::atexit(__predicate_trace_log_predicates);
+        set_predicates_finalizer = true;
+    }
 }
 
 /**
@@ -205,5 +299,7 @@ extern "C" void __predicate_trace_push(uint64_t block_label, uint64_t predicate)
  * @param block_label Block label.
  */
 extern "C" void __predicate_trace_pop(uint64_t block_label) noexcept {
-    predicates.erase(block_label);
+    current_predicates.erase(block_label);
 }
+
+#pragma clang diagnostic pop

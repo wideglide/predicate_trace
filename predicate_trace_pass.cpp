@@ -462,15 +462,14 @@ Value* PredicateTracePass::extractPredicate(IRBuilder<>& builder, Instruction* i
 
     // Handle calls
     if (auto call_inst = dyn_cast<CallBase>(inst)) {
-        IRBuilder<> call_builder(call_inst);
+        // TODO: Investigate why we sometimes handle stale calls?  Note that this doesn't seem to
+        //       cause problems with generated bitcode.
         auto it = return_values_.find(call_inst);
         if (it != return_values_.end()) {
             return it->second;
         }
 
-        log() << "missing return value feature vector for call!\n";
-        call_inst->print(errs());
-        return call_builder.getInt64(0);
+        return builder.getInt64(0);
     }
 
     // Handle loads from memory

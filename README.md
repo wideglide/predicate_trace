@@ -18,9 +18,9 @@ $ ./run_tests
 
 ## TODO
 
-### Deterministic identifiers for basic blocks
+## Trace record mechanism
 
-In order to integrate the predicates collected at run-time into other analyses, there needs to be a way to refer to basic blocks in a build-independent manner.  As a first step, this requires a labeling of the *pre-analysis* module CFG.
+## Trace diff
 
 ### Query interface
 
