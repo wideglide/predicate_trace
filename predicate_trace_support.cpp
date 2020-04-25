@@ -201,22 +201,29 @@ extern "C" void __predicate_trace_set_return(const uint64_t value) noexcept {
     call_stack.top().return_value_ = value;
 }
 
+// TODO: Unfortunately, destructors for thread-local data are run before the finalizer that logs
+//       everything to disk, so we need to use globally-visible data here.  So, for now despite
+//       the lock this code will give incorrect results for multithreaded programs.
+
 /** Flag to determine whether a finalizer has been set. */
-static thread_local bool set_predicates_finalizer = false;
+static bool set_predicates_finalizer = false;
 
 /** Current predicate set at any given program point. */
-static thread_local std::unordered_map<uint64_t, uint64_t> current_predicates;
+static std::unordered_map<uint64_t, uint64_t> current_predicates;
 
 /** Block predicates. */
-static thread_local std::unordered_map<uint64_t, std::pair<uint64_t, uint64_t>> block_predicates;
+static std::unordered_map<uint64_t, std::pair<uint64_t, uint64_t>> block_predicates;
 
 /** Last conditional block. */
-static thread_local uint64_t last_block_label;
+static uint64_t last_block_label;
 
 /** Edge set. */
-static thread_local std::
+static std::
     unordered_set<std::pair<uint64_t, uint64_t>, llvm::pair_hash<uint64_t, uint64_t>>
         edges;
+
+/** Predicates mutex. */
+static std::mutex predicates_mutex;
 
 /**
  * Log predicates.
@@ -224,6 +231,8 @@ static thread_local std::
 static void __predicate_trace_log_predicates() {
     using namespace flatbuffers;
     using namespace PredicateTrace;
+
+    std::lock_guard<std::mutex> lock(predicates_mutex);
 
     char default_log_path[] = "/tmp/predicate_trace";
     auto log_path = getenv("PREDICATE_TRACE_LOG_PATH");
@@ -266,6 +275,8 @@ static void __predicate_trace_log_predicates() {
  * @param predicate Predicate.
  */
 extern "C" void __predicate_trace_push(uint64_t block_label, uint64_t predicate) noexcept {
+    std::lock_guard<std::mutex> lock(predicates_mutex);
+
     current_predicates[block_label] = predicate;
 
     auto path_features = 0UL;
@@ -299,6 +310,7 @@ extern "C" void __predicate_trace_push(uint64_t block_label, uint64_t predicate)
  * @param block_label Block label.
  */
 extern "C" void __predicate_trace_pop(uint64_t block_label) noexcept {
+    std::lock_guard<std::mutex> lock(predicates_mutex);
     current_predicates.erase(block_label);
 }
 
