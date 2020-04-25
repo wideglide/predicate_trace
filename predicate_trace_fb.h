@@ -17,21 +17,21 @@ struct BlockPredicate;
 
 FLATBUFFERS_MANUALLY_ALIGNED_STRUCT(8) Edge FLATBUFFERS_FINAL_CLASS {
  private:
-  int64_t source_;
-  int64_t target_;
+  uint64_t source_;
+  uint64_t target_;
 
  public:
   Edge() {
     memset(static_cast<void *>(this), 0, sizeof(Edge));
   }
-  Edge(int64_t _source, int64_t _target)
+  Edge(uint64_t _source, uint64_t _target)
       : source_(flatbuffers::EndianScalar(_source)),
         target_(flatbuffers::EndianScalar(_target)) {
   }
-  int64_t source() const {
+  uint64_t source() const {
     return flatbuffers::EndianScalar(source_);
   }
-  int64_t target() const {
+  uint64_t target() const {
     return flatbuffers::EndianScalar(target_);
   }
 };
@@ -39,26 +39,26 @@ FLATBUFFERS_STRUCT_END(Edge, 16);
 
 FLATBUFFERS_MANUALLY_ALIGNED_STRUCT(8) BlockPredicate FLATBUFFERS_FINAL_CLASS {
  private:
-  int64_t block_;
-  int64_t predicate_;
-  int64_t size_;
+  uint64_t block_;
+  uint64_t predicate_;
+  uint64_t size_;
 
  public:
   BlockPredicate() {
     memset(static_cast<void *>(this), 0, sizeof(BlockPredicate));
   }
-  BlockPredicate(int64_t _block, int64_t _predicate, int64_t _size)
+  BlockPredicate(uint64_t _block, uint64_t _predicate, uint64_t _size)
       : block_(flatbuffers::EndianScalar(_block)),
         predicate_(flatbuffers::EndianScalar(_predicate)),
         size_(flatbuffers::EndianScalar(_size)) {
   }
-  int64_t block() const {
+  uint64_t block() const {
     return flatbuffers::EndianScalar(block_);
   }
-  int64_t predicate() const {
+  uint64_t predicate() const {
     return flatbuffers::EndianScalar(predicate_);
   }
-  int64_t size() const {
+  uint64_t size() const {
     return flatbuffers::EndianScalar(size_);
   }
 };

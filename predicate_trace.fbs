@@ -6,14 +6,14 @@ table Trace {
 }
 
 struct Edge {
-    source: int64;
-    target: int64;
+    source: uint64;
+    target: uint64;
 }
 
 struct BlockPredicate {
-    block: int64;
-    predicate: int64;
-    size: int64;
+    block: uint64;
+    predicate: uint64;
+    size: uint64;
 }
 
 root_type Trace;
