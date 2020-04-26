@@ -85,7 +85,7 @@ struct PredicateTracePass : llvm::PassInfoMixin<PredicateTracePass> {
 
 private:
     void instrumentMain(llvm::Function&);
-    void instrumentInstructions(llvm::BasicBlock&);
+    void instrumentBlock(llvm::BasicBlock& block);
     llvm::Instruction* instrumentComparison(llvm::CmpInst*);
     llvm::Instruction* instrumentStore(llvm::StoreInst*);
     llvm::Instruction* instrumentCall(llvm::CallBase*);
@@ -111,6 +111,7 @@ private:
     llvm::Function* set_return_fn_{};
     llvm::Function* push_predicate_fn_{};
     llvm::Function* pop_predicate_fn_{};
+    llvm::Function* record_transition_{};
     llvm::PostDominatorTree post_dom_tree_;
 };
 

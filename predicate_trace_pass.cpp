@@ -100,12 +100,22 @@ PreservedAnalyses PredicateTracePass::run(Module& module, ModuleAnalysisManager&
     push_predicate_fn_->setDoesNotThrow();
 
     // Declare the predicate pop function
-    auto pop_predicate_fn_ty =
-        FunctionType::get(Type::getVoidTy(context), {IntegerType::getInt64Ty(context)}, false);
+    auto pop_predicate_fn_ty = FunctionType::get(
+        Type::getVoidTy(context),
+        {IntegerType::getInt64Ty(context), IntegerType::getInt64Ty(context)},
+        false);
     auto pop_predicate_fn_decl =
         module.getOrInsertFunction("__predicate_trace_pop", pop_predicate_fn_ty);
     pop_predicate_fn_ = dyn_cast<Function>(pop_predicate_fn_decl.getCallee());
     pop_predicate_fn_->setDoesNotThrow();
+
+    // Declare the transition record function
+    auto record_transition_fn_ty =
+        FunctionType::get(Type::getVoidTy(context), {IntegerType::getInt64Ty(context)}, false);
+    auto record_transition_fn_decl =
+        module.getOrInsertFunction("__predicate_record_transition", record_transition_fn_ty);
+    record_transition_ = dyn_cast<Function>(record_transition_fn_decl.getCallee());
+    record_transition_->setDoesNotThrow();
 
     // Process all functions in the module
     for (auto& function : module) {
@@ -131,9 +141,9 @@ PreservedAnalyses PredicateTracePass::run(Module& module, ModuleAnalysisManager&
             instrumentMain(function);
         }
 
-        // Instrument individual instructions in each basic block (should preserve CFG)
+        // Instrument each basic block (should preserve CFG)
         for (auto& block : function) {
-            instrumentInstructions(block);
+            instrumentBlock(block);
         }
 
         // Instrument any conditional branches (may change CFG by splitting blocks)
@@ -147,8 +157,6 @@ PreservedAnalyses PredicateTracePass::run(Module& module, ModuleAnalysisManager&
                 }
             }
         }
-
-        //        function.print(errs());
     }
 
     // We always modify the module
@@ -170,7 +178,7 @@ void PredicateTracePass::instrumentMain(llvm::Function& function) {
     builder.CreateCall(push_arg_fn_, {builder.getInt64(argv.to_ullong())});
 }
 
-void PredicateTracePass::instrumentInstructions(BasicBlock& block) {
+void PredicateTracePass::instrumentBlock(BasicBlock& block) {
     // Instrument any special instructions in this block
     for (auto it = block.begin(); it != block.end(); ++it) {
         Instruction* last_inst = nullptr;
@@ -191,6 +199,11 @@ void PredicateTracePass::instrumentInstructions(BasicBlock& block) {
             it = BasicBlock::InstListType::iterator(last_inst);
         }
     }
+
+    // Record a block transition
+    auto label = getBlockLabel(&block);
+    IRBuilder<> builder(&*block.getFirstInsertionPt());
+    builder.CreateCall(record_transition_, {builder.getInt64(label)});
 }
 
 llvm::Instruction* PredicateTracePass::instrumentStore(llvm::StoreInst* store_inst) {
@@ -280,30 +293,39 @@ void PredicateTracePass::instrumentConditionalBranch(BranchInst* branch_inst) {
     auto post_dom_block = post_dom_tree_.findNearestCommonDominator(
         branch_inst->getSuccessor(0), branch_inst->getSuccessor(1));
     if (!post_dom_block) {
+        // TODO: This can happen when there are multiple exit blocks, in which case we *could* just
+        //       pop at all of them...
         log() << "no post-dominator block found!\n";
         return;
     }
 
-    auto block_label = getBlockLabel(branch_inst->getParent());
+    auto true_block = branch_inst->getSuccessor(0);
+    assert(true_block != nullptr);
+    auto true_block_label = getBlockLabel(true_block);
+    auto false_block = branch_inst->getSuccessor(1);
+    assert(false_block != nullptr);
+    auto false_block_label = getBlockLabel(false_block);
     IRBuilder<> builder(&*post_dom_block->getFirstInsertionPt());
-    builder.CreateCall(pop_predicate_fn_, {builder.getInt64(block_label)});
+    builder.CreateCall(
+        pop_predicate_fn_,
+        {builder.getInt64(true_block_label), builder.getInt64(false_block_label)});
 
     // Insert basic block for each outgoing edge to push respective path predicates
-    auto true_block = SplitEdge(branch_inst->getParent(), branch_inst->getSuccessor(0));
-    assert(true_block != nullptr);
-    setBlockLabel(true_block, num_blocks_++);
+    auto new_true_block = SplitEdge(branch_inst->getParent(), true_block);
+    assert(new_true_block);
+    setBlockLabel(new_true_block, num_blocks_++);
     builder.SetInsertPoint(branch_inst);
     auto true_predicate = extractPredicate(builder, branch_inst);
-    builder.SetInsertPoint(&*true_block->getFirstInsertionPt());
-    builder.CreateCall(push_predicate_fn_, {builder.getInt64(block_label), true_predicate});
+    builder.SetInsertPoint(&*new_true_block->getFirstInsertionPt());
+    builder.CreateCall(push_predicate_fn_, {builder.getInt64(true_block_label), true_predicate});
 
-    auto false_block = SplitEdge(branch_inst->getParent(), branch_inst->getSuccessor(1));
-    assert(false_block != nullptr);
-    setBlockLabel(false_block, num_blocks_++);
+    auto new_false_block = SplitEdge(branch_inst->getParent(), false_block);
+    assert(new_false_block != nullptr);
+    setBlockLabel(new_false_block, num_blocks_++);
     builder.SetInsertPoint(branch_inst);
     auto false_predicate = invertPredicate(builder, true_predicate);
-    builder.SetInsertPoint(&*false_block->getFirstInsertionPt());
-    builder.CreateCall(push_predicate_fn_, {builder.getInt64(block_label), false_predicate});
+    builder.SetInsertPoint(&*new_false_block->getFirstInsertionPt());
+    builder.CreateCall(push_predicate_fn_, {builder.getInt64(false_block_label), false_predicate});
 }
 
 static PredicateFeatures createPredicate(CmpInst::Predicate predicate) {
@@ -443,13 +465,13 @@ Value* PredicateTracePass::extractPredicate(IRBuilder<>& builder, Value* value) 
     } else if (auto arg = dyn_cast<Argument>(value)) {
         return builder.CreateCall(get_arg_fn_, {builder.getInt32(arg->getArgNo())});
     } else if (auto assembly = dyn_cast<InlineAsm>(value)) {
-//        log() << "encountered assembly value\n";
+        //        log() << "encountered assembly value\n";
     } else if (auto metadata = dyn_cast<MetadataAsValue>(value)) {
-//        log() << "encountered metadata value\n";
+        //        log() << "encountered metadata value\n";
     } else if (auto op = dyn_cast<Operator>(value)) {
-//        log() << "encountered operator value\n";
+        //        log() << "encountered operator value\n";
     } else if (auto derived = dyn_cast<DerivedUser>(value)) {
-//        log() << "encountered derived user value\n";
+        //        log() << "encountered derived user value\n";
     } else {
         log() << "unknown value type!\n";
     }
@@ -462,15 +484,14 @@ Value* PredicateTracePass::extractPredicate(IRBuilder<>& builder, Instruction* i
 
     // Handle calls
     if (auto call_inst = dyn_cast<CallBase>(inst)) {
-        IRBuilder<> call_builder(call_inst);
+        // TODO: Investigate why we sometimes handle stale calls?  Note that this doesn't seem to
+        //       cause problems with generated bitcode.
         auto it = return_values_.find(call_inst);
         if (it != return_values_.end()) {
             return it->second;
         }
 
-        log() << "missing return value feature vector for call!\n";
-        call_inst->print(errs());
-        return call_builder.getInt64(0);
+        return builder.getInt64(0);
     }
 
     // Handle loads from memory
