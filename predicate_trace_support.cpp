@@ -164,7 +164,11 @@ extern "C" void __predicate_trace_push_locals() noexcept {
  * @return Return value.
  */
 extern "C" uint64_t __predicate_trace_pop_locals() noexcept {
-    assert(!call_stack.empty());
+    if (call_stack.empty()) {
+        //        log() << "no local scope to pop\n";
+        return 0;
+    }
+
     auto return_value = call_stack.top().return_value_.to_ullong();
     call_stack.pop();
     return return_value;
@@ -176,7 +180,11 @@ extern "C" uint64_t __predicate_trace_pop_locals() noexcept {
  * @param value Value.
  */
 extern "C" void __predicate_trace_push_argument(const uint64_t value) noexcept {
-    assert(!call_stack.empty());
+    if (call_stack.empty()) {
+        //        log() << "no local scope to push argument to\n";
+        return;
+    }
+
     call_stack.top().arguments_.emplace_back(value);
 }
 
@@ -187,7 +195,16 @@ extern "C" void __predicate_trace_push_argument(const uint64_t value) noexcept {
  * @return Value.
  */
 extern "C" uint64_t __predicate_trace_get_argument(const uint32_t index) noexcept {
-    assert(!call_stack.empty() && index < call_stack.top().arguments_.size());
+    if (call_stack.empty()) {
+        //        log() << "no local scope to fetch argument from\n";
+        return 0;
+    }
+
+    if (index >= call_stack.top().arguments_.size()) {
+        //        log() << "invalid argument index " << index << " for local scope\n";
+        return 0;
+    }
+
     return call_stack.top().arguments_[index].to_ullong();
 }
 
@@ -197,7 +214,11 @@ extern "C" uint64_t __predicate_trace_get_argument(const uint32_t index) noexcep
  * @param value Value.
  */
 extern "C" void __predicate_trace_set_return(const uint64_t value) noexcept {
-    assert(!call_stack.empty());
+    if (call_stack.empty()) {
+        //        log() << "no local scope to set return\n";
+        return;
+    }
+
     call_stack.top().return_value_ = value;
 }
 
@@ -218,9 +239,7 @@ static std::unordered_map<uint64_t, std::pair<uint64_t, uint64_t>> block_predica
 static uint64_t last_block_label;
 
 /** Edge set. */
-static std::
-    unordered_set<std::pair<uint64_t, uint64_t>, llvm::pair_hash<uint64_t, uint64_t>>
-        edges;
+static std::unordered_set<std::pair<uint64_t, uint64_t>, llvm::pair_hash<uint64_t, uint64_t>> edges;
 
 /** Predicates mutex. */
 static std::mutex predicates_mutex;
