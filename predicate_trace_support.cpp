@@ -326,11 +326,14 @@ extern "C" void __predicate_trace_push(uint64_t block_label, uint64_t predicate)
 /**
  * Pop a path predicate.
  *
- * @param block_label Block label.
+ * @param true_block_label True block label.
+ * @param false_block_label False block label.
  */
-extern "C" void __predicate_trace_pop(uint64_t block_label) noexcept {
+extern "C" void __predicate_trace_pop(
+    uint64_t true_block_label, uint64_t false_block_label) noexcept {
     std::lock_guard<std::mutex> lock(predicates_mutex);
-    current_predicates.erase(block_label);
+    current_predicates.erase(true_block_label);
+    current_predicates.erase(false_block_label);
 }
 
 #pragma clang diagnostic pop
