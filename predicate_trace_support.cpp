@@ -311,12 +311,6 @@ extern "C" void __predicate_trace_push(uint64_t block_label, uint64_t predicate)
         block_predicates[block_label] = std::make_pair(path_features, current_predicates.size());
     }
 
-    if (!last_block_label) {
-        edges.emplace(last_block_label, block_label);
-    }
-
-    last_block_label = block_label;
-
     if (!set_predicates_finalizer) {
         std::atexit(__predicate_trace_log_predicates);
         set_predicates_finalizer = true;
@@ -334,6 +328,20 @@ extern "C" void __predicate_trace_pop(
     std::lock_guard<std::mutex> lock(predicates_mutex);
     current_predicates.erase(true_block_label);
     current_predicates.erase(false_block_label);
+}
+
+/**
+ * Record a block transition.
+ *
+ * @param block_label Block label.
+ */
+extern "C" void __predicate_record_transition(uint64_t block_label) {
+    std::lock_guard<std::mutex> lock(predicates_mutex);
+    if (last_block_label) {
+        edges.emplace(last_block_label, block_label);
+    }
+
+    last_block_label = block_label;
 }
 
 #pragma clang diagnostic pop

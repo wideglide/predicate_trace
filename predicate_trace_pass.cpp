@@ -109,6 +109,14 @@ PreservedAnalyses PredicateTracePass::run(Module& module, ModuleAnalysisManager&
     pop_predicate_fn_ = dyn_cast<Function>(pop_predicate_fn_decl.getCallee());
     pop_predicate_fn_->setDoesNotThrow();
 
+    // Declare the transition record function
+    auto record_transition_fn_ty =
+        FunctionType::get(Type::getVoidTy(context), {IntegerType::getInt64Ty(context)}, false);
+    auto record_transition_fn_decl =
+        module.getOrInsertFunction("__predicate_record_transition", record_transition_fn_ty);
+    record_transition_ = dyn_cast<Function>(record_transition_fn_decl.getCallee());
+    record_transition_->setDoesNotThrow();
+
     // Process all functions in the module
     for (auto& function : module) {
         if (function.isDeclaration()) {
@@ -133,9 +141,9 @@ PreservedAnalyses PredicateTracePass::run(Module& module, ModuleAnalysisManager&
             instrumentMain(function);
         }
 
-        // Instrument individual instructions in each basic block (should preserve CFG)
+        // Instrument each basic block (should preserve CFG)
         for (auto& block : function) {
-            instrumentInstructions(block);
+            instrumentBlock(block);
         }
 
         // Instrument any conditional branches (may change CFG by splitting blocks)
@@ -149,8 +157,6 @@ PreservedAnalyses PredicateTracePass::run(Module& module, ModuleAnalysisManager&
                 }
             }
         }
-
-        //        function.print(errs());
     }
 
     // We always modify the module
@@ -172,7 +178,7 @@ void PredicateTracePass::instrumentMain(llvm::Function& function) {
     builder.CreateCall(push_arg_fn_, {builder.getInt64(argv.to_ullong())});
 }
 
-void PredicateTracePass::instrumentInstructions(BasicBlock& block) {
+void PredicateTracePass::instrumentBlock(BasicBlock& block) {
     // Instrument any special instructions in this block
     for (auto it = block.begin(); it != block.end(); ++it) {
         Instruction* last_inst = nullptr;
@@ -193,6 +199,11 @@ void PredicateTracePass::instrumentInstructions(BasicBlock& block) {
             it = BasicBlock::InstListType::iterator(last_inst);
         }
     }
+
+    // Record a block transition
+    auto label = getBlockLabel(&block);
+    IRBuilder<> builder(&*block.getFirstInsertionPt());
+    builder.CreateCall(record_transition_, {builder.getInt64(label)});
 }
 
 llvm::Instruction* PredicateTracePass::instrumentStore(llvm::StoreInst* store_inst) {
