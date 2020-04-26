@@ -6,7 +6,7 @@
 
 #include <cstdint>
 #include <cstdlib>
-#include <filesystem>
+#include <experimental/filesystem>
 #include <fstream>
 #include <iostream>
 #include <mutex>
@@ -18,8 +18,11 @@
 #include "predicate_trace_fb.h"
 #include "predicate_trace_pass.h"
 
+#include <sys/syscall.h>
+#define gettid() syscall(SYS_gettid)
+
 using namespace llvm;
-namespace fs = std::filesystem;
+namespace fs = std::experimental::filesystem;
 
 /** Flag to determine whether a finalizer has been set or not. */
 static bool set_counts_finalizer = false;
