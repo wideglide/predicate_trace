@@ -1,11 +1,11 @@
 #include <gtest/gtest.h>
 
 #include <cstdlib>
-#include <experimental/filesystem>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 
-namespace fs = std::experimental::filesystem;
+namespace fs = std::filesystem;
 
 static void run_predicate_trace_test(
     const char* test_command, const char* output_path, const char* expected) {

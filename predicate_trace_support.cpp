@@ -6,7 +6,7 @@
 
 #include <cstdint>
 #include <cstdlib>
-#include <experimental/filesystem>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <mutex>
@@ -22,7 +22,7 @@
 #define gettid() syscall(SYS_gettid)
 
 using namespace llvm;
-namespace fs = std::experimental::filesystem;
+namespace fs = std::filesystem;
 
 /** Flag to determine whether a finalizer has been set or not. */
 static bool set_counts_finalizer = false;
