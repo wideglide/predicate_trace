@@ -16,7 +16,13 @@ static raw_ostream& log() {
     return errs();
 }
 
-PredicateTracePass::PredicateTracePass() : module_id_(0), function_id_(0) {}
+static cl::opt<bool> enable_feature_tracking{
+    "enable-predicate-feature-tracking",
+    cl::desc("Enable run-time predicate feature vector tracking"),
+    cl::init(false),
+};
+
+PredicateTracePass::PredicateTracePass() : module_id_(0), function_id_(0), num_blocks_(0) {}
 
 PreservedAnalyses PredicateTracePass::run(Module& module, ModuleAnalysisManager& manager) {
     log() << "instrumenting predicates for " << module.getName() << "\n";
@@ -123,6 +129,21 @@ PreservedAnalyses PredicateTracePass::run(Module& module, ModuleAnalysisManager&
             continue;
         }
 
+        // Process comparisons
+        for (auto& block : function) {
+            for (auto it = block.begin(); it != block.end(); ++it) {
+                if (auto cmp_inst = dyn_cast<CmpInst>(it)) {
+                    instrumentComparison(cmp_inst);
+                }
+            }
+        }
+
+        // Check if feature vector tracking should be added
+        if (!enable_feature_tracking) {
+            continue;
+        }
+
+        // Create a function ID
         function_id_ = std::hash<std::string>{}(function.getGlobalIdentifier());
 
         // Compute the post-dominator tree for this function
@@ -137,11 +158,12 @@ PreservedAnalyses PredicateTracePass::run(Module& module, ModuleAnalysisManager&
             setBlockLabel(&block, num_blocks_++);
         }
 
+        // Handle main if necessary
         if (function.getName() == "main") {
             instrumentMain(function);
         }
 
-        // Instrument each basic block (should preserve CFG)
+        // Instrument each basic block (must preserve CFG)
         for (auto& block : function) {
             instrumentBlock(block);
         }
@@ -184,8 +206,6 @@ void PredicateTracePass::instrumentBlock(BasicBlock& block) {
         Instruction* last_inst = nullptr;
         if (auto store_inst = dyn_cast<StoreInst>(it)) {
             last_inst = instrumentStore(store_inst);
-        } else if (auto cmp_inst = dyn_cast<CmpInst>(it)) {
-            last_inst = instrumentComparison(cmp_inst);
         } else if (auto call_inst = dyn_cast<CallInst>(it)) {
             auto called_fn = call_inst->getCalledFunction();
             if (!called_fn || !called_fn->getName().startswith("__predicate_trace_")) {
