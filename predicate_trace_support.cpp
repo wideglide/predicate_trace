@@ -4,13 +4,14 @@
 #include <llvm/Support/SMTAPI.h>
 #include <unistd.h>
 
+#include <boost/filesystem.hpp>
 #include <cstdint>
 #include <cstdlib>
-#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <mutex>
 #include <nlohmann/json.hpp>
+#include <sstream>
 #include <stack>
 #include <unordered_map>
 #include <unordered_set>
@@ -19,7 +20,7 @@
 #include "predicate_trace_pass.h"
 
 using namespace llvm;
-namespace fs = std::filesystem;
+namespace fs = boost::filesystem;
 
 /** Flag to determine whether a finalizer has been set or not. */
 static bool set_counts_finalizer = false;
@@ -71,11 +72,11 @@ static void __predicate_trace_log_statistics() {
 
     o["predicate_counts"] = counts;
     fs::path log_dir = log_path;
-    std::error_code error;
+    boost::system::error_code error;
     fs::create_directories(log_dir, error);
     fs::path file_path = log_dir / "statistics.json";
     log() << "logging statistics to " << file_path << "\n";
-    std::ofstream output(file_path);
+    std::ofstream output(file_path.string());
     output << o.dump();
 }
 
@@ -260,7 +261,7 @@ static void __predicate_trace_log_predicates() {
     }
 
     fs::path log_dir = log_path;
-    std::error_code error;
+    boost::system::error_code error;
     fs::create_directories(log_dir, error);
 
     std::vector<Edge> es;
@@ -283,7 +284,7 @@ static void __predicate_trace_log_predicates() {
     file_buffer << "predicates_" << gettid() << ".fb";
     fs::path file_path = log_dir / file_buffer.str();
     log() << "logging predicates to " << file_path << "\n";
-    std::ofstream output(file_path, std::ios::binary);
+    std::ofstream output(file_path.string(), std::ios::binary);
     output.write(reinterpret_cast<char*>(builder.GetBufferPointer()), builder.GetSize());
 }
 

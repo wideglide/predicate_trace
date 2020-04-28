@@ -1,11 +1,11 @@
 #include <gtest/gtest.h>
 
+#include <boost/filesystem.hpp>
 #include <cstdlib>
-#include <filesystem>
 #include <fstream>
 #include <iostream>
 
-namespace fs = std::filesystem;
+namespace fs = boost::filesystem;
 
 static void run_predicate_trace_test(
     const char* test_command, const char* output_path, const char* expected) {
@@ -16,7 +16,7 @@ static void run_predicate_trace_test(
 
     std::string observed;
     fs::path log_path = fs::path(output_path) / "statistics.json";
-    std::ifstream input(log_path);
+    std::ifstream input(log_path.string());
     input.seekg(0, std::ios::end);
     observed.reserve(input.tellg());
     input.seekg(0, std::ios::beg);
