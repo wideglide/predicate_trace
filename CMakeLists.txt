@@ -4,7 +4,7 @@ project(predicate_trace C CXX)
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_COMPILER_ID Clang)
 
-find_package(Boost 1.67.0 REQUIRED COMPONENTS filesystem)
+find_package(Boost 1.58.0 REQUIRED COMPONENTS filesystem)
 
 find_package(LLVM 10.0 REQUIRED CONFIG)
 include_directories(${LLVM_INCLUDE_DIRS})
