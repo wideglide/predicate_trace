@@ -17,7 +17,9 @@ jobs:
       run: cmake -E make_directory ${{runner.workspace}}/build
 
     - name: configure cmake
-      run: CC=clang-9 CXX=clang++-9 cmake $GITHUB_WORKSPACE -DBOOST_ROOT=$BOOST_ROOT_1_69_0 -DBoost_ADDITIONAL_VERSIONS=1.69.0 -DBoost_ARCHITECTURE=-x64
+      run: |
+        sed -i 's/10.0//' CMakeLists.txt
+        CC=clang-9 CXX=clang++-9 cmake $GITHUB_WORKSPACE -DBOOST_ROOT=$BOOST_ROOT_1_69_0 -DBoost_ADDITIONAL_VERSIONS=1.69.0 -DBoost_ARCHITECTURE=-x64
       working-directory: ${{runner.workspace}}/build
 
     - name: build 
