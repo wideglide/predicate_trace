@@ -1,0 +1,26 @@
+name: build predicate trace
+
+on: [push]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: create build environment
+      run: cmake -E make_directory ${{runner.workspace}}/build
+
+    - name: configure cmake
+      working-directory: ${{runner.workspace}}/build
+      run: cmake $GITHUB_WORKSPACE
+
+    - name: build 
+      working-directory: ${{runner.workspace}}/build
+      run: cmake --build .
+
+    - name: test
+      working-directory: ${{runner.workspace}}/build
+      run: ./run_tests 
