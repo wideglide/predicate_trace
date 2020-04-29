@@ -10,7 +10,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
-      submodules: true
+      with:
+        submodules: true
 
     - name: create build environment
       run: cmake -E make_directory ${{runner.workspace}}/build
