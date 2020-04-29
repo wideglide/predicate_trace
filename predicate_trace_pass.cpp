@@ -5,6 +5,7 @@
 #include <llvm/IR/Instructions.h>
 #include <llvm/Transforms/Utils/BasicBlockUtils.h>
 
+#include "llvm/Support/CommandLine.h"
 #include "llvm/IR/DerivedUser.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
@@ -13,11 +14,18 @@
 
 using namespace llvm;
 
+static cl::opt<bool> enable_feature_tracking{
+    "enable-predicate-feature-tracking",
+    cl::desc("Enable run-time predicate feature vector tracking"),
+    cl::init(false),
+};
+
 static raw_ostream& log() {
     errs() << "PREDICATE_TRACE: ";
     return errs();
 }
 
+// PredicateTracePass::PredicateTracePass() : module_id_(0), function_id_(0), num_blocks_(0) {}
 
 namespace {
     class PredicateTracePass : public ModulePass {
@@ -29,7 +37,7 @@ namespace {
 
 private:
     void instrumentMain(Function&);
-    void instrumentInstructions(BasicBlock&);
+    void instrumentBlock(BasicBlock& block);
     Instruction* instrumentComparison(CmpInst*);
     Instruction* instrumentStore(StoreInst*);
     Instruction* instrumentCall(CallBase*);
@@ -45,6 +53,7 @@ private:
     std::uint64_t num_blocks_;
     std::unordered_map<BasicBlock*, uint64_t> block_labels_;
     std::unordered_map<CallBase*, Value*> return_values_;
+    GlobalValue* program_exiting_{};
     Function* update_predicate_stats_fn_{};
     Function* load_fn_{};
     Function* store_fn_{};
@@ -55,18 +64,26 @@ private:
     Function* set_return_fn_{};
     Function* push_predicate_fn_{};
     Function* pop_predicate_fn_{};
+    Function* record_transition_{};
     PostDominatorTree post_dom_tree_;
     };
 }
 
-//PredicateTracePass::PredicateTracePass() : module_id_(0), function_id_(0) {}
 
 bool PredicateTracePass::runOnModule(Module &module) {
 
     log() << "instrumenting predicates for " << module.getName() << "\n";
 
+    if (getenv("PREDICATE_TRACE_PASS_TRACKING") != NULL) {
+        enable_feature_tracking = true;
+    }
+
     auto& context = module.getContext();
     module_id_ = std::hash<std::string>{}(module.getModuleIdentifier());
+
+    // Declare the program exiting flag
+    program_exiting_ = dyn_cast<GlobalVariable>(
+        module.getOrInsertGlobal("__predicate_trace_program_exiting", Type::getInt32Ty(context)));
 
     // Declare the statistics update function
     auto update_predicate_stats_fn_ty = FunctionType::get(
@@ -144,12 +161,22 @@ bool PredicateTracePass::runOnModule(Module &module) {
     push_predicate_fn_->setDoesNotThrow();
 
     // Declare the predicate pop function
-    auto pop_predicate_fn_ty =
-        FunctionType::get(Type::getVoidTy(context), {IntegerType::getInt64Ty(context)}, false);
+    auto pop_predicate_fn_ty = FunctionType::get(
+        Type::getVoidTy(context),
+        {IntegerType::getInt64Ty(context), IntegerType::getInt64Ty(context)},
+        false);
     auto pop_predicate_fn_decl =
         module.getOrInsertFunction("__predicate_trace_pop", pop_predicate_fn_ty);
     pop_predicate_fn_ = dyn_cast<Function>(pop_predicate_fn_decl.getCallee());
     pop_predicate_fn_->setDoesNotThrow();
+
+    // Declare the transition record function
+    auto record_transition_fn_ty =
+        FunctionType::get(Type::getVoidTy(context), {IntegerType::getInt64Ty(context)}, false);
+    auto record_transition_fn_decl =
+        module.getOrInsertFunction("__predicate_trace_record_transition", record_transition_fn_ty);
+    record_transition_ = dyn_cast<Function>(record_transition_fn_decl.getCallee());
+    record_transition_->setDoesNotThrow();
 
     // Process all functions in the module
     for (auto& function : module) {
@@ -157,6 +184,21 @@ bool PredicateTracePass::runOnModule(Module &module) {
             continue;
         }
 
+        // Process comparisons
+        for (auto& block : function) {
+            for (auto it = block.begin(); it != block.end(); ++it) {
+                if (auto cmp_inst = dyn_cast<CmpInst>(it)) {
+                    instrumentComparison(cmp_inst);
+                }
+            }
+        }
+
+        // Check if feature vector tracking should be added
+        if (!enable_feature_tracking) {
+            continue;
+        }
+
+        // Create a function ID
         function_id_ = std::hash<std::string>{}(function.getGlobalIdentifier());
 
         // Compute the post-dominator tree for this function
@@ -171,13 +213,14 @@ bool PredicateTracePass::runOnModule(Module &module) {
             setBlockLabel(&block, num_blocks_++);
         }
 
+        // Handle main if necessary
         if (function.getName() == "main") {
             instrumentMain(function);
         }
 
-        // Instrument individual instructions in each basic block (should preserve CFG)
+        // Instrument each basic block (must preserve CFG)
         for (auto& block : function) {
-            instrumentInstructions(block);
+            instrumentBlock(block);
         }
 
         // Instrument any conditional branches (may change CFG by splitting blocks)
@@ -191,8 +234,6 @@ bool PredicateTracePass::runOnModule(Module &module) {
                 }
             }
         }
-
-        //        function.print(errs());
     }
 
     // We always modify the module
@@ -212,16 +253,22 @@ void PredicateTracePass::instrumentMain(llvm::Function& function) {
     builder.CreateCall(push_locals_fn_, {});
     builder.CreateCall(push_arg_fn_, {builder.getInt64(argc.to_ullong())});
     builder.CreateCall(push_arg_fn_, {builder.getInt64(argv.to_ullong())});
+
+    for (auto& it : function) {
+        auto term_inst = it.getTerminator();
+        if (auto ret_inst = dyn_cast<ReturnInst>(term_inst)) {
+            builder.SetInsertPoint(term_inst);
+            builder.CreateStore(builder.getInt32(1), program_exiting_);
+        }
+    }
 }
 
-void PredicateTracePass::instrumentInstructions(BasicBlock& block) {
+void PredicateTracePass::instrumentBlock(BasicBlock& block) {
     // Instrument any special instructions in this block
     for (auto it = block.begin(); it != block.end(); ++it) {
         Instruction* last_inst = nullptr;
         if (auto store_inst = dyn_cast<StoreInst>(it)) {
             last_inst = instrumentStore(store_inst);
-        } else if (auto cmp_inst = dyn_cast<CmpInst>(it)) {
-            last_inst = instrumentComparison(cmp_inst);
         } else if (auto call_inst = dyn_cast<CallInst>(it)) {
             auto called_fn = call_inst->getCalledFunction();
             if (!called_fn || !called_fn->getName().startswith("__predicate_trace_")) {
@@ -235,6 +282,11 @@ void PredicateTracePass::instrumentInstructions(BasicBlock& block) {
             it = BasicBlock::InstListType::iterator(last_inst);
         }
     }
+
+    // Record a block transition
+    auto label = getBlockLabel(&block);
+    IRBuilder<> builder(&*block.getFirstInsertionPt());
+    builder.CreateCall(record_transition_, {builder.getInt64(label)});
 }
 
 llvm::Instruction* PredicateTracePass::instrumentStore(llvm::StoreInst* store_inst) {
@@ -273,8 +325,13 @@ Instruction* PredicateTracePass::instrumentCall(CallBase* call_inst) {
     //    call_inst->print(errs());
     //    errs() << "\n";
 
-    // Create a new function scope and propagate arguments to that scope
+    // Check if the callee does not return
     IRBuilder<> builder(call_inst);
+    if (call_inst->doesNotReturn()) {
+        builder.CreateStore(builder.getInt32(1), program_exiting_);
+    }
+
+    // Create a new function scope and propagate arguments to that scope
     builder.CreateCall(push_locals_fn_, {});
     for (auto it = call_inst->data_operands_begin(); it != call_inst->data_operands_end(); ++it) {
         auto value = extractPredicate(builder, *it);
@@ -324,30 +381,39 @@ void PredicateTracePass::instrumentConditionalBranch(BranchInst* branch_inst) {
     auto post_dom_block = post_dom_tree_.findNearestCommonDominator(
         branch_inst->getSuccessor(0), branch_inst->getSuccessor(1));
     if (!post_dom_block) {
+        // TODO: This can happen when there are multiple exit blocks, in which case we *could* just
+        //       pop at all of them...
         log() << "no post-dominator block found!\n";
         return;
     }
 
-    auto block_label = getBlockLabel(branch_inst->getParent());
+    auto true_block = branch_inst->getSuccessor(0);
+    assert(true_block != nullptr);
+    auto true_block_label = getBlockLabel(true_block);
+    auto false_block = branch_inst->getSuccessor(1);
+    assert(false_block != nullptr);
+    auto false_block_label = getBlockLabel(false_block);
     IRBuilder<> builder(&*post_dom_block->getFirstInsertionPt());
-    builder.CreateCall(pop_predicate_fn_, {builder.getInt64(block_label)});
+    builder.CreateCall(
+        pop_predicate_fn_,
+        {builder.getInt64(true_block_label), builder.getInt64(false_block_label)});
 
     // Insert basic block for each outgoing edge to push respective path predicates
-    auto true_block = SplitEdge(branch_inst->getParent(), branch_inst->getSuccessor(0));
-    assert(true_block != nullptr);
-    setBlockLabel(true_block, num_blocks_++);
+    auto new_true_block = SplitEdge(branch_inst->getParent(), true_block);
+    assert(new_true_block);
+    setBlockLabel(new_true_block, num_blocks_++);
     builder.SetInsertPoint(branch_inst);
     auto true_predicate = extractPredicate(builder, branch_inst);
-    builder.SetInsertPoint(&*true_block->getFirstInsertionPt());
-    builder.CreateCall(push_predicate_fn_, {builder.getInt64(block_label), true_predicate});
+    builder.SetInsertPoint(&*new_true_block->getFirstInsertionPt());
+    builder.CreateCall(push_predicate_fn_, {builder.getInt64(true_block_label), true_predicate});
 
-    auto false_block = SplitEdge(branch_inst->getParent(), branch_inst->getSuccessor(1));
-    assert(false_block != nullptr);
-    setBlockLabel(false_block, num_blocks_++);
+    auto new_false_block = SplitEdge(branch_inst->getParent(), false_block);
+    assert(new_false_block != nullptr);
+    setBlockLabel(new_false_block, num_blocks_++);
     builder.SetInsertPoint(branch_inst);
     auto false_predicate = invertPredicate(builder, true_predicate);
-    builder.SetInsertPoint(&*false_block->getFirstInsertionPt());
-    builder.CreateCall(push_predicate_fn_, {builder.getInt64(block_label), false_predicate});
+    builder.SetInsertPoint(&*new_false_block->getFirstInsertionPt());
+    builder.CreateCall(push_predicate_fn_, {builder.getInt64(false_block_label), false_predicate});
 }
 
 static PredicateFeatures createPredicate(CmpInst::Predicate predicate) {
@@ -487,13 +553,13 @@ Value* PredicateTracePass::extractPredicate(IRBuilder<>& builder, Value* value) 
     } else if (auto arg = dyn_cast<Argument>(value)) {
         return builder.CreateCall(get_arg_fn_, {builder.getInt32(arg->getArgNo())});
     } else if (auto assembly = dyn_cast<InlineAsm>(value)) {
-//        log() << "encountered assembly value\n";
+        //        log() << "encountered assembly value\n";
     } else if (auto metadata = dyn_cast<MetadataAsValue>(value)) {
-//        log() << "encountered metadata value\n";
+        //        log() << "encountered metadata value\n";
     } else if (auto op = dyn_cast<Operator>(value)) {
-//        log() << "encountered operator value\n";
+        //        log() << "encountered operator value\n";
     } else if (auto derived = dyn_cast<DerivedUser>(value)) {
-//        log() << "encountered derived user value\n";
+        //        log() << "encountered derived user value\n";
     } else {
         log() << "unknown value type!\n";
     }
@@ -506,16 +572,14 @@ Value* PredicateTracePass::extractPredicate(IRBuilder<>& builder, Instruction* i
 
     // Handle calls
     if (auto call_inst = dyn_cast<CallBase>(inst)) {
-        IRBuilder<> call_builder(call_inst);
+        // TODO: Investigate why we sometimes handle stale calls?  Note that this doesn't seem to
+        //       cause problems with generated bitcode.
         auto it = return_values_.find(call_inst);
         if (it != return_values_.end()) {
             return it->second;
         }
 
-        log() << "missing return value feature vector for call!\n";
-        call_inst->print(errs());
-        return call_builder.getInt64(0);
-        // return nullptr;
+        return builder.getInt64(0);
     }
 
     // Handle loads from memory

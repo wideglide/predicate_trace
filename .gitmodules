@@ -10,3 +10,6 @@
 [submodule "corpora"]
 	path = corpora
 	url = git@gitlab.com:Rode0day/corpora.git
+[submodule "flatbuffers"]
+	path = flatbuffers
+	url = https://github.com/google/flatbuffers.git

@@ -1,0 +1,19 @@
+namespace PredicateTrace;
+
+table Trace {
+    edges: [Edge];
+    predicates: [BlockPredicate];
+}
+
+struct Edge {
+    source: uint64;
+    target: uint64;
+}
+
+struct BlockPredicate {
+    block: uint64;
+    predicate: uint64;
+    size: uint64;
+}
+
+root_type Trace;

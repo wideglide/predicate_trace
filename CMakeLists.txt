@@ -2,7 +2,11 @@ cmake_minimum_required(VERSION 3.15)
 project(predicate_trace C CXX)
 
 set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_CXX_COMPILER_ID Clang)
+
+find_package(Boost 1.58.0 REQUIRED COMPONENTS filesystem)
 
 find_package(LLVM 10.0 REQUIRED CONFIG)
 include_directories(${LLVM_INCLUDE_DIRS})
@@ -15,17 +19,18 @@ include(LLVMIRUtil)
 include(GoogleTest)
 
 add_subdirectory(googletest)
+add_subdirectory(flatbuffers)
 
 add_library(predicate_trace_pass SHARED predicate_trace_pass.cpp predicate_trace_pass.h)
 target_compile_definitions(predicate_trace_pass PUBLIC LLVM_USE_NEWPM)
 
 add_library(predicate_trace_support SHARED predicate_trace_support.cpp)
-target_include_directories(predicate_trace_support PUBLIC json/include)
-target_link_libraries(predicate_trace_support PUBLIC LLVM)
+target_include_directories(predicate_trace_support PUBLIC json/include flatbuffers/include)
+target_link_libraries(predicate_trace_support PUBLIC LLVM Boost::filesystem)
 
 add_executable(run_tests tests/run_tests.cpp)
 target_include_directories(run_tests PUBLIC googletest/googletest/include)
-target_link_libraries(run_tests PUBLIC gtest_main)
+target_link_libraries(run_tests PUBLIC Boost::filesystem gtest_main)
 
 function(predicate_trace_test)
     add_executable(${ARGV0} tests/${ARGV0}.cpp)
@@ -47,3 +52,4 @@ predicate_trace_test(test_for_00)
 predicate_trace_test(test_fn_00)
 predicate_trace_test(test_global_00)
 predicate_trace_test(test_bswap_00)
+predicate_trace_test(test_fabs_00)
