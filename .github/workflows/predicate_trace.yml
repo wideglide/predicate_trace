@@ -5,22 +5,24 @@ on: [push]
 jobs:
   build:
 
+    name: Predicate Trace
     runs-on: ubuntu-latest
 
     steps:
     - uses: actions/checkout@v2
+      submodules: true
 
     - name: create build environment
       run: cmake -E make_directory ${{runner.workspace}}/build
 
     - name: configure cmake
-      working-directory: ${{runner.workspace}}/build
       run: cmake $GITHUB_WORKSPACE
+      working-directory: ${{runner.workspace}}/build
 
     - name: build 
-      working-directory: ${{runner.workspace}}/build
       run: cmake --build .
+      working-directory: ${{runner.workspace}}/build
 
     - name: test
-      working-directory: ${{runner.workspace}}/build
       run: ./run_tests 
+      working-directory: ${{runner.workspace}}/build
