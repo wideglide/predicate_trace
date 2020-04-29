@@ -17,7 +17,7 @@ jobs:
       run: cmake -E make_directory ${{runner.workspace}}/build
 
     - name: configure cmake
-      run: cmake $GITHUB_WORKSPACE
+      run: CC=clang-9 CXX=clang++-9 cmake $GITHUB_WORKSPACE -DBOOST_ROOT=$BOOST_ROOT_1_69_0
       working-directory: ${{runner.workspace}}/build
 
     - name: build 
