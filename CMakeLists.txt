@@ -1,10 +1,12 @@
 cmake_minimum_required(VERSION 3.15)
 project(predicate_trace C CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_CXX_COMPILER_ID Clang)
+
+find_package(Boost 1.58.0 REQUIRED COMPONENTS filesystem)
 
 find_package(LLVM 10.0 REQUIRED CONFIG)
 include_directories(${LLVM_INCLUDE_DIRS})
@@ -24,11 +26,11 @@ target_compile_definitions(predicate_trace_pass PUBLIC LLVM_USE_NEWPM)
 
 add_library(predicate_trace_support SHARED predicate_trace_support.cpp)
 target_include_directories(predicate_trace_support PUBLIC json/include flatbuffers/include)
-target_link_libraries(predicate_trace_support PUBLIC LLVM flatbuffers)
+target_link_libraries(predicate_trace_support PUBLIC LLVM Boost::filesystem)
 
 add_executable(run_tests tests/run_tests.cpp)
 target_include_directories(run_tests PUBLIC googletest/googletest/include)
-target_link_libraries(run_tests PUBLIC gtest_main)
+target_link_libraries(run_tests PUBLIC Boost::filesystem gtest_main)
 
 function(predicate_trace_test)
     add_executable(${ARGV0} tests/${ARGV0}.cpp)

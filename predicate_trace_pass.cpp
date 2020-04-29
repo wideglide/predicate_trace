@@ -11,18 +11,28 @@
 
 using namespace llvm;
 
+static cl::opt<bool> enable_feature_tracking{
+    "enable-predicate-feature-tracking",
+    cl::desc("Enable run-time predicate feature vector tracking"),
+    cl::init(false),
+};
+
 static raw_ostream& log() {
     errs() << "PREDICATE_TRACE: ";
     return errs();
 }
 
-PredicateTracePass::PredicateTracePass() : module_id_(0), function_id_(0) {}
+PredicateTracePass::PredicateTracePass() : module_id_(0), function_id_(0), num_blocks_(0) {}
 
 PreservedAnalyses PredicateTracePass::run(Module& module, ModuleAnalysisManager& manager) {
     log() << "instrumenting predicates for " << module.getName() << "\n";
 
     auto& context = module.getContext();
     module_id_ = std::hash<std::string>{}(module.getModuleIdentifier());
+
+    // Declare the program exiting flag
+    program_exiting_ = dyn_cast<GlobalVariable>(
+        module.getOrInsertGlobal("__predicate_trace_program_exiting", Type::getInt32Ty(context)));
 
     // Declare the statistics update function
     auto update_predicate_stats_fn_ty = FunctionType::get(
@@ -113,7 +123,7 @@ PreservedAnalyses PredicateTracePass::run(Module& module, ModuleAnalysisManager&
     auto record_transition_fn_ty =
         FunctionType::get(Type::getVoidTy(context), {IntegerType::getInt64Ty(context)}, false);
     auto record_transition_fn_decl =
-        module.getOrInsertFunction("__predicate_record_transition", record_transition_fn_ty);
+        module.getOrInsertFunction("__predicate_trace_record_transition", record_transition_fn_ty);
     record_transition_ = dyn_cast<Function>(record_transition_fn_decl.getCallee());
     record_transition_->setDoesNotThrow();
 
@@ -123,6 +133,21 @@ PreservedAnalyses PredicateTracePass::run(Module& module, ModuleAnalysisManager&
             continue;
         }
 
+        // Process comparisons
+        for (auto& block : function) {
+            for (auto it = block.begin(); it != block.end(); ++it) {
+                if (auto cmp_inst = dyn_cast<CmpInst>(it)) {
+                    instrumentComparison(cmp_inst);
+                }
+            }
+        }
+
+        // Check if feature vector tracking should be added
+        if (!enable_feature_tracking) {
+            continue;
+        }
+
+        // Create a function ID
         function_id_ = std::hash<std::string>{}(function.getGlobalIdentifier());
 
         // Compute the post-dominator tree for this function
@@ -137,11 +162,12 @@ PreservedAnalyses PredicateTracePass::run(Module& module, ModuleAnalysisManager&
             setBlockLabel(&block, num_blocks_++);
         }
 
+        // Handle main if necessary
         if (function.getName() == "main") {
             instrumentMain(function);
         }
 
-        // Instrument each basic block (should preserve CFG)
+        // Instrument each basic block (must preserve CFG)
         for (auto& block : function) {
             instrumentBlock(block);
         }
@@ -176,6 +202,14 @@ void PredicateTracePass::instrumentMain(llvm::Function& function) {
     builder.CreateCall(push_locals_fn_, {});
     builder.CreateCall(push_arg_fn_, {builder.getInt64(argc.to_ullong())});
     builder.CreateCall(push_arg_fn_, {builder.getInt64(argv.to_ullong())});
+
+    for (auto& it : function) {
+        auto term_inst = it.getTerminator();
+        if (auto ret_inst = dyn_cast<ReturnInst>(term_inst)) {
+            builder.SetInsertPoint(term_inst);
+            builder.CreateStore(builder.getInt32(1), program_exiting_);
+        }
+    }
 }
 
 void PredicateTracePass::instrumentBlock(BasicBlock& block) {
@@ -184,8 +218,6 @@ void PredicateTracePass::instrumentBlock(BasicBlock& block) {
         Instruction* last_inst = nullptr;
         if (auto store_inst = dyn_cast<StoreInst>(it)) {
             last_inst = instrumentStore(store_inst);
-        } else if (auto cmp_inst = dyn_cast<CmpInst>(it)) {
-            last_inst = instrumentComparison(cmp_inst);
         } else if (auto call_inst = dyn_cast<CallInst>(it)) {
             auto called_fn = call_inst->getCalledFunction();
             if (!called_fn || !called_fn->getName().startswith("__predicate_trace_")) {
@@ -242,8 +274,13 @@ Instruction* PredicateTracePass::instrumentCall(CallBase* call_inst) {
     //    call_inst->print(errs());
     //    errs() << "\n";
 
-    // Create a new function scope and propagate arguments to that scope
+    // Check if the callee does not return
     IRBuilder<> builder(call_inst);
+    if (call_inst->doesNotReturn()) {
+        builder.CreateStore(builder.getInt32(1), program_exiting_);
+    }
+
+    // Create a new function scope and propagate arguments to that scope
     builder.CreateCall(push_locals_fn_, {});
     for (auto it = call_inst->data_operands_begin(); it != call_inst->data_operands_end(); ++it) {
         auto value = extractPredicate(builder, *it);

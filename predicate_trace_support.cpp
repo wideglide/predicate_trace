@@ -4,9 +4,9 @@
 #include <llvm/Support/SMTAPI.h>
 #include <unistd.h>
 
+#include <boost/filesystem.hpp>
 #include <cstdint>
 #include <cstdlib>
-#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <mutex>
@@ -22,10 +22,10 @@
 #define gettid() syscall(SYS_gettid)
 
 using namespace llvm;
-namespace fs = std::filesystem;
+namespace fs = boost::filesystem;
 
-/** Flag to determine whether a finalizer has been set or not. */
-static bool set_counts_finalizer = false;
+/** Program exiting flag. */
+uint32_t __predicate_trace_program_exiting = 0;
 
 /** Predicate counts map. */
 static std::
@@ -48,7 +48,7 @@ std::ostream& log() {
 /**
  * Log predicate statistics.
  */
-static void __predicate_trace_log_statistics() {
+static void __attribute__((destructor)) __predicate_trace_log_statistics() {
     using json = nlohmann::json;
 
     std::lock_guard<std::mutex> lock(predicate_counts_mutex);
@@ -74,11 +74,11 @@ static void __predicate_trace_log_statistics() {
 
     o["predicate_counts"] = counts;
     fs::path log_dir = log_path;
-    std::error_code error;
+    boost::system::error_code error;
     fs::create_directories(log_dir, error);
     fs::path file_path = log_dir / "statistics.json";
     log() << "logging statistics to " << file_path << "\n";
-    std::ofstream output(file_path);
+    std::ofstream output(file_path.string());
     output << o.dump();
 }
 
@@ -89,8 +89,11 @@ static void __predicate_trace_log_statistics() {
  * @param predicate Comparison instruction predicate.
  */
 extern "C" void __predicate_trace_update_stats(uint32_t opcode, uint32_t predicate) noexcept {
-    std::lock_guard<std::mutex> lock(predicate_counts_mutex);
+    if (__predicate_trace_program_exiting) {
+        return;
+    }
 
+    std::lock_guard<std::mutex> lock(predicate_counts_mutex);
     auto key = std::make_pair(opcode, predicate);
     auto it = predicate_counts.emplace(key, 1);
     if (!it.second) {
@@ -99,10 +102,6 @@ extern "C" void __predicate_trace_update_stats(uint32_t opcode, uint32_t predica
     }
 
     // TODO: We're also going to need a crash handler
-    if (!set_counts_finalizer) {
-        std::atexit(__predicate_trace_log_statistics);
-        set_counts_finalizer = true;
-    }
 }
 
 // The feature vector needs to be wide enough to cover the predicate feature enum
@@ -118,6 +117,10 @@ static std::mutex features_mutex;
  * @return Value.
  */
 extern "C" uint64_t __predicate_trace_load(const uint64_t ptr) noexcept {
+    if (__predicate_trace_program_exiting) {
+        return 0;
+    }
+
     std::lock_guard<std::mutex> lock(features_mutex);
     auto it = features.find(ptr);
     if (it != features.end()) {
@@ -142,6 +145,10 @@ extern "C" uint64_t __predicate_trace_load(const uint64_t ptr) noexcept {
  * @param value Value.
  */
 extern "C" void __predicate_trace_store(const uint64_t ptr, const uint64_t value) noexcept {
+    if (__predicate_trace_program_exiting) {
+        return;
+    }
+
     std::lock_guard<std::mutex> lock(features_mutex);
     features[ptr] = value;
 }
@@ -157,6 +164,10 @@ static thread_local std::stack<LocalScope> call_stack;  // NOLINT(cert-err58-cpp
  * Push a new local scope.
  */
 extern "C" void __predicate_trace_push_locals() noexcept {
+    if (__predicate_trace_program_exiting) {
+        return;
+    }
+
     // Push a scope with one slot for the return value, if any
     call_stack.push({});
 }
@@ -167,8 +178,11 @@ extern "C" void __predicate_trace_push_locals() noexcept {
  * @return Return value.
  */
 extern "C" uint64_t __predicate_trace_pop_locals() noexcept {
+    if (__predicate_trace_program_exiting) {
+        return 0;
+    }
+
     if (call_stack.empty()) {
-        //        log() << "no local scope to pop\n";
         return 0;
     }
 
@@ -183,8 +197,11 @@ extern "C" uint64_t __predicate_trace_pop_locals() noexcept {
  * @param value Value.
  */
 extern "C" void __predicate_trace_push_argument(const uint64_t value) noexcept {
+    if (__predicate_trace_program_exiting) {
+        return;
+    }
+
     if (call_stack.empty()) {
-        //        log() << "no local scope to push argument to\n";
         return;
     }
 
@@ -198,13 +215,15 @@ extern "C" void __predicate_trace_push_argument(const uint64_t value) noexcept {
  * @return Value.
  */
 extern "C" uint64_t __predicate_trace_get_argument(const uint32_t index) noexcept {
+    if (__predicate_trace_program_exiting) {
+        return 0;
+    }
+
     if (call_stack.empty()) {
-        //        log() << "no local scope to fetch argument from\n";
         return 0;
     }
 
     if (index >= call_stack.top().arguments_.size()) {
-        //        log() << "invalid argument index " << index << " for local scope\n";
         return 0;
     }
 
@@ -217,8 +236,11 @@ extern "C" uint64_t __predicate_trace_get_argument(const uint32_t index) noexcep
  * @param value Value.
  */
 extern "C" void __predicate_trace_set_return(const uint64_t value) noexcept {
+    if (__predicate_trace_program_exiting) {
+        return;
+    }
+
     if (call_stack.empty()) {
-        //        log() << "no local scope to set return\n";
         return;
     }
 
@@ -228,9 +250,6 @@ extern "C" void __predicate_trace_set_return(const uint64_t value) noexcept {
 // TODO: Unfortunately, destructors for thread-local data are run before the finalizer that logs
 //       everything to disk, so we need to use globally-visible data here.  So, for now despite
 //       the lock this code will give incorrect results for multithreaded programs.
-
-/** Flag to determine whether a finalizer has been set. */
-static bool set_predicates_finalizer = false;
 
 /** Current predicate set at any given program point. */
 static std::unordered_map<uint64_t, uint64_t> current_predicates;
@@ -250,7 +269,7 @@ static std::mutex predicates_mutex;
 /**
  * Log predicates.
  */
-static void __predicate_trace_log_predicates() {
+static void __attribute__((destructor)) __predicate_trace_log_predicates() {
     using namespace flatbuffers;
     using namespace PredicateTrace;
 
@@ -263,7 +282,7 @@ static void __predicate_trace_log_predicates() {
     }
 
     fs::path log_dir = log_path;
-    std::error_code error;
+    boost::system::error_code error;
     fs::create_directories(log_dir, error);
 
     std::vector<Edge> es;
@@ -282,11 +301,9 @@ static void __predicate_trace_log_predicates() {
     auto trace = CreateTraceDirect(builder, &es, &ps);
     builder.Finish(trace);
 
-    std::stringstream file_buffer;
-    file_buffer << "predicates_" << gettid() << ".fb";
-    fs::path file_path = log_dir / file_buffer.str();
+    fs::path file_path = log_dir / "predicates.fb";
     log() << "logging predicates to " << file_path << "\n";
-    std::ofstream output(file_path, std::ios::binary);
+    std::ofstream output(file_path.string(), std::ios::binary);
     output.write(reinterpret_cast<char*>(builder.GetBufferPointer()), builder.GetSize());
 }
 
@@ -297,8 +314,11 @@ static void __predicate_trace_log_predicates() {
  * @param predicate Predicate.
  */
 extern "C" void __predicate_trace_push(uint64_t block_label, uint64_t predicate) noexcept {
-    std::lock_guard<std::mutex> lock(predicates_mutex);
+    if (__predicate_trace_program_exiting) {
+        return;
+    }
 
+    std::lock_guard<std::mutex> lock(predicates_mutex);
     current_predicates[block_label] = predicate;
 
     auto path_features = 0UL;
@@ -313,11 +333,6 @@ extern "C" void __predicate_trace_push(uint64_t block_label, uint64_t predicate)
     } else {
         block_predicates[block_label] = std::make_pair(path_features, current_predicates.size());
     }
-
-    if (!set_predicates_finalizer) {
-        std::atexit(__predicate_trace_log_predicates);
-        set_predicates_finalizer = true;
-    }
 }
 
 /**
@@ -328,6 +343,10 @@ extern "C" void __predicate_trace_push(uint64_t block_label, uint64_t predicate)
  */
 extern "C" void __predicate_trace_pop(
     uint64_t true_block_label, uint64_t false_block_label) noexcept {
+    if (__predicate_trace_program_exiting) {
+        return;
+    }
+
     std::lock_guard<std::mutex> lock(predicates_mutex);
     current_predicates.erase(true_block_label);
     current_predicates.erase(false_block_label);
@@ -338,7 +357,11 @@ extern "C" void __predicate_trace_pop(
  *
  * @param block_label Block label.
  */
-extern "C" void __predicate_record_transition(uint64_t block_label) {
+extern "C" void __predicate_trace_record_transition(uint64_t block_label) noexcept {
+    if (__predicate_trace_program_exiting) {
+        return;
+    }
+
     std::lock_guard<std::mutex> lock(predicates_mutex);
     if (last_block_label) {
         edges.emplace(last_block_label, block_label);
